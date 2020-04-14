@@ -1635,7 +1635,6 @@ void CNSSolver::BC_WallModel(CGeometry      *geometry,
 
   if(config->GetMarker_All_KindBC(val_marker) == HEAT_FLUX) {
     HeatFlux_Prescribed = true;
-    Wall_HeatFlux       = config->GetWall_HeatFlux(Marker_Tag);
   }
 
   /*--- Loop over all the vertices on this boundary marker. ---*/
@@ -1814,9 +1813,10 @@ void CNSSolver::BC_WallModel(CGeometry      *geometry,
           su2double thermal_conductivity = Cp * ( laminar_viscosity/Prandtl_Lam + eddy_viscosity/Prandtl_Turb);
 
           Wall_HeatFlux = thermal_conductivity * dTdn;
+        }else{
 
+          Wall_HeatFlux = config->GetWall_HeatFlux(Marker_Tag) /config->GetHeat_Flux_Ref();
         }
-
         for (iVar = 0; iVar < nVar; iVar++) Res_Visc[iVar] = 0.0;
 
         /*--- Weakly impose the WM heat flux for the energy equation---*/
