@@ -1619,7 +1619,7 @@ void CNSSolver::BC_WallModel(CGeometry      *geometry,
                                 unsigned short val_marker) {
 
   unsigned short iDim, iVar;
-  unsigned long iVertex, iPoint;
+  unsigned long iVertex, iPoint, total_index;
 
   bool implicit = (config->GetKind_TimeIntScheme_Flow() == EULER_IMPLICIT);
   bool HeatFlux_Prescribed = false;
@@ -1705,12 +1705,17 @@ void CNSSolver::BC_WallModel(CGeometry      *geometry,
 
         /*--- Compute the residual using an upwind scheme. ---*/
 
-        conv_numerics->ComputeResidual(Residual, Jacobian_i, Jacobian_j, config);
+        auto residual = conv_numerics->ComputeResidual(config);
 
+        LinSysRes.AddBlock(iPoint, residual);
+
+        /*--- Jacobian contribution for implicit integration. ---*/
+        if (implicit)
+          Jacobian.AddBlock2Diag(iPoint, residual.jacobian_i);
       }
       else{
 
-        for (iVar = 0; iVar < nVar; iVar++) Residual[iVar] = 0.0;
+        for (iVar = 0; iVar < nVar; iVar++) Res_Conv[iVar] = 0.0;
 
         /*--- Store the corrected velocity at the wall which will
          be zero (v = 0), unless there are moving walls (v = u_wall)---*/
@@ -1728,27 +1733,19 @@ void CNSSolver::BC_WallModel(CGeometry      *geometry,
           LinSysRes.SetBlock_Zero(iPoint, iDim+1);
         nodes->SetVel_ResTruncError_Zero(iPoint);
 
-      }
+        /*--- Update residual value ---*/
+        LinSysRes.AddBlock(iPoint, Res_Conv);
 
-      /*--- Update residual value ---*/
-      LinSysRes.AddBlock(iPoint, Residual);
-
-      /*--- Jacobian contribution for implicit integration. ---*/
-
-      if (implicit) {
-        if (nodes->GetTauWall_Flag(iPoint)){
-          Jacobian.AddBlock(iPoint, iPoint, Jacobian_i);
-        }
-        else{
-
-          /*--- Enforce the no-slip boundary condition in a strong way by
-           modifying the velocity-rows of the Jacobian (1 on the diagonal). ---*/
+        /*--- Enforce the no-slip boundary condition in a strong way by
+         modifying the velocity-rows of the Jacobian (1 on the diagonal). ---*/
+        if (implicit){
           for (iVar = 1; iVar <= nDim; iVar++) {
-            unsigned long total_index = iPoint*nVar+iVar;
+            total_index = iPoint*nVar+iVar;
             Jacobian.DeleteValsRowi(total_index);
           }
         }
       }
+
 
       /*-------------------------------------------------------*/
       /*-------------------------------------------------------*/
@@ -1826,6 +1823,7 @@ void CNSSolver::BC_WallModel(CGeometry      *geometry,
         Res_Visc[nDim+1] = Wall_HeatFlux * Area;
 
       }
+
       LinSysRes.SubtractBlock(iPoint, Res_Visc);
 
     }
