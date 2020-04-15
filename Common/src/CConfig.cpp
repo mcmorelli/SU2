@@ -1444,8 +1444,8 @@ void CConfig::SetConfig_Options() {
    a unit vector. \ingroup Config*/
   addInletOption("MARKER_INLET", nMarker_Inlet, Marker_Inlet, Inlet_Ttotal, Inlet_Ptotal, Inlet_FlowDir);
 
-  addStringListOption("INLET_FUNCTIONS", nInletFunctions, InletFunctions);
-  addStringListOption("OUTLET_FUNCTIONS", nOutletFunctions, OutletFunctions);
+  addStringListOption("MARKER_EXPRESSION", nMarker_Expression, Marker_Expression);
+  addStringListOption("BC_EXPRESSIONS", nBCExpressions, BCExpressions);
 
   /*!\brief MARKER_RIEMANN \n DESCRIPTION: Riemann boundary marker(s) with the following formats, a unit vector.
    * \n OPTIONS: See \link Riemann_Map \endlink. The variables indicated by the option and the flow direction unit vector must be specified. \ingroup Config*/
@@ -1863,7 +1863,7 @@ void CConfig::SetConfig_Options() {
    *  \n DESCRIPTION: Adjoint problem boundary condition \n OPTIONS: see \link Objective_Map \endlink \n DEFAULT: DRAG_COEFFICIENT \ingroup Config*/
   addEnumListOption("OBJECTIVE_FUNCTION", nObj, Kind_ObjFunc, Objective_Map);
 
-  addStringOption("OBJECTIVE_FUNCTION_NEW", Objective_Function, "NONE");
+  addStringOption("OBJECTIVE_FUNCTION_NEW", Objective_Function, "{DRAG}");
 
   /* DESCRIPTION: parameter for the definition of a complex objective function */
   addDoubleOption("DCD_DCL_VALUE", dCD_dCL, 0.0);
@@ -5045,13 +5045,10 @@ void CConfig::SetPostprocessing(unsigned short val_software, unsigned short val_
   parser.Compile(UserFunctionCode);
   parser.ExecCode();
 
+  if (nBCExpressions != nMarker_Expression){
+    SU2_MPI::Error("Number of expressions in BC_EXPRESSIONS must match number of markers in MARKER_EXPRESSION", CURRENT_FUNCTION);
+  }
 
-  if ((nInletFunctions != 0) && (nInletFunctions != nMarker_Inlet)){
-    SU2_MPI::Error("If custom inlet functions are used, option INLET_FUNCTIONS must provide functions for all inlets in MARKER_INLET", CURRENT_FUNCTION);
-  }
-  if ((nOutletFunctions != 0)  && (nOutletFunctions != nMarker_Outlet)){
-    SU2_MPI::Error("If custom outlet functions are used, option OUTLET_FUNCTIONS must provide functions for all outlets in MARKER_OUTLET", CURRENT_FUNCTION);
-  }
 }
 
 void CConfig::SetMarkers(unsigned short val_software) {
@@ -5059,7 +5056,7 @@ void CConfig::SetMarkers(unsigned short val_software) {
   unsigned short iMarker_All, iMarker_CfgFile, iMarker_Euler, iMarker_Custom,
   iMarker_FarField, iMarker_SymWall, iMarker_PerBound,
   iMarker_NearFieldBound, iMarker_Fluid_InterfaceBound,
-  iMarker_Inlet, iMarker_Riemann, iMarker_Giles, iMarker_Outlet, iMarker_Isothermal,
+  iMarker_Inlet, iMarker_Riemann, iMarker_Giles, iMarker_Outlet, iMarker_Expression, iMarker_Isothermal,
   iMarker_HeatFlux, iMarker_EngineInflow, iMarker_EngineExhaust, iMarker_Damper,
   iMarker_Displacement, iMarker_Load, iMarker_FlowLoad, iMarker_Internal,
   iMarker_Monitoring, iMarker_Designing, iMarker_GeoEval, iMarker_Plotting, iMarker_Analyze,
@@ -5081,7 +5078,7 @@ void CConfig::SetMarkers(unsigned short val_software) {
   nMarker_CfgFile = nMarker_Euler + nMarker_FarField + nMarker_SymWall +
   nMarker_PerBound + nMarker_NearFieldBound + nMarker_Fluid_InterfaceBound +
   nMarker_CHTInterface + nMarker_Inlet + nMarker_Riemann +
-  nMarker_Giles + nMarker_Outlet + nMarker_Isothermal + nMarker_HeatFlux +
+  nMarker_Giles + nMarker_Outlet + nMarker_Expression + nMarker_Isothermal + nMarker_HeatFlux +
   nMarker_EngineInflow + nMarker_EngineExhaust + nMarker_Internal +
   nMarker_Supersonic_Inlet + nMarker_Supersonic_Outlet + nMarker_Displacement + nMarker_Load +
   nMarker_FlowLoad + nMarker_Custom + nMarker_Damper + nMarker_Fluid_Load +
@@ -5472,6 +5469,12 @@ void CConfig::SetMarkers(unsigned short val_software) {
     iMarker_CfgFile++;
   }
 
+  for (iMarker_Expression = 0; iMarker_Expression < nMarker_Expression; iMarker_Expression++) {
+    Marker_CfgFile_TagBound[iMarker_CfgFile] = Marker_Expression[iMarker_Expression];
+    Marker_CfgFile_KindBC[iMarker_CfgFile] = EXPRESSION_BOUNDARY;
+    iMarker_CfgFile++;
+  }
+
   for (iMarker_Isothermal = 0; iMarker_Isothermal < nMarker_Isothermal; iMarker_Isothermal++) {
     Marker_CfgFile_TagBound[iMarker_CfgFile] = Marker_Isothermal[iMarker_Isothermal];
     Marker_CfgFile_KindBC[iMarker_CfgFile] = ISOTHERMAL;
@@ -5708,12 +5711,11 @@ void CConfig::SetOutput(unsigned short val_software, unsigned short val_izone) {
         if (Kind_Regime == INCOMPRESSIBLE) cout << "Incompressible Laminar Navier-Stokes' equations." << endl;
         cout << "Subgrid Scale model: ";
         switch (Kind_SGS_Model) {
+          case NO_SGS_MODEL: cout << "No SGS Model" << endl; break;
           case IMPLICIT_LES: cout << "Implicit LES" << endl; break;
           case SMAGORINSKY:  cout << "Smagorinsky " << endl; break;
           case WALE:         cout << "WALE"         << endl; break;
           case VREMAN:       cout << "VREMAN"         << endl; break;
-          default:
-            SU2_MPI::Error("Subgrid Scale model not specified.", CURRENT_FUNCTION);
         }
         break;
       case RANS:     case DISC_ADJ_RANS:
@@ -7070,6 +7072,15 @@ void CConfig::SetOutput(unsigned short val_software, unsigned short val_izone) {
     for (iMarker_Outlet = 0; iMarker_Outlet < nMarker_Outlet; iMarker_Outlet++) {
       BoundaryTable << Marker_Outlet[iMarker_Outlet];
       if (iMarker_Outlet < nMarker_Outlet-1)  BoundaryTable << " ";
+    }
+    BoundaryTable.PrintFooter();
+  }
+
+  if (nMarker_Expression != 0) {
+    BoundaryTable << "Expression boundary";
+    for (iMarker_Outlet = 0; iMarker_Outlet < nMarker_Expression; iMarker_Outlet++) {
+      BoundaryTable << Marker_Expression[iMarker_Outlet];
+      if (iMarker_Outlet < nMarker_Expression-1)  BoundaryTable << " ";
     }
     BoundaryTable.PrintFooter();
   }

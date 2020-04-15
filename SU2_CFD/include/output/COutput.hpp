@@ -375,6 +375,7 @@ public:
 
       string funcName = rawName;
       replace_if(funcName.begin(),funcName.end(),::ispunct,'_');
+      replace_if(funcName.begin(),funcName.end(),::isblank,'_');
 
       funcName += to_string(historyFieldsAll.GetFieldsByType({type}).size());
       std::string func = "function " + funcName + "(){"
@@ -430,11 +431,7 @@ protected:
                                string groupname, string description,
                                FieldType field_type = FieldType::DEFAULT ){
     HistoryOutputField newField(field_name, format, groupname, field_type, description);
-    if (!historyFieldsAll.GetScope().find(name))
-      newField.tokenRef = &historyFieldsAll.GetScope()[name];
-    else {
-      SU2_MPI::Error("Token name " + name + " already in global scope", CURRENT_FUNCTION);
-    }
+    newField.tokenRef = &historyFieldsAll.GetScope()[name];
     historyFieldsAll.AddItem(name, newField);
   }
 
