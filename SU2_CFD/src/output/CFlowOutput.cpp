@@ -2887,7 +2887,7 @@ void CFlowOutput::SetTimeAveragedFields(CConfig *config){
   }
 
   if (config->GetWall_Models() || config->GetWall_Functions()){
-    AddVolumeOutput("TAUWALL_WM",  "TauWall",   "TIME_AVERAGE", "Shear stress at the wall as predicted by the wall function/model");
+    AddVolumeOutput("MEAN_TAUWALL_WM",  "MeanTauWall_WM",   "TIME_AVERAGE", "Shear stress at the wall as predicted by the wall function/model");
   }
 }
 
@@ -2933,6 +2933,6 @@ void CFlowOutput::LoadTimeAveragedData(unsigned long iPoint, CVariable *Node_Flo
   }
 
   if (config->GetWall_Models() || config->GetWall_Functions()){
-    SetAvgVolumeOutputValue("TAUWALL_WM", iPoint, Node_Flow->GetTauWall(iPoint));
+    SetAvgVolumeOutputValue("MEAN_TAUWALL_WM", iPoint, Node_Flow->GetTauWall(iPoint));
   }
 }
