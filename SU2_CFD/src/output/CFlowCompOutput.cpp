@@ -549,7 +549,7 @@ void CFlowCompOutput::LoadVolumeData(CConfig *config, CGeometry *geometry, CSolv
   }
 
   if (config->GetTime_Domain()){
-    LoadTimeAveragedData(iPoint, Node_Flow);
+    LoadTimeAveragedData(config, iPoint, Node_Flow);
   }
 }
 

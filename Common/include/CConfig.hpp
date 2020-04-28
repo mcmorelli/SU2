@@ -157,6 +157,7 @@ private:
   unsigned short TimeMarching;       /*!< \brief Steady or unsteady (time stepping or dual time stepping) computation. */
   unsigned short Dynamic_Analysis;   /*!< \brief Static or dynamic structural analysis. */
   unsigned short nStartUpIter;       /*!< \brief Start up iterations using the fine grid. */
+  unsigned short startTimeAvgIter;   /*!< \brief Iteration at which the time averaging process begins. */
   su2double FixAzimuthalLine;        /*!< \brief Fix an azimuthal line due to misalignments of the nearfield. */
   su2double **DV_Value;              /*!< \brief Previous value of the design variable. */
   su2double Venkat_LimiterCoeff;     /*!< \brief Limiter coefficient */
@@ -1932,6 +1933,12 @@ public:
    * \return Start up iterations using the fine grid.
    */
   unsigned short GetnStartUpIter(void) const { return nStartUpIter; }
+
+  /*!
+  * \brief Get the iteration when the averaging begins.
+  * \return Iteration when to begin averaging.
+  */
+  unsigned short GetstartTimeAvgIter(void) const { return startTimeAvgIter; }
 
   /*!
    * \brief Get the reference area for non dimensional coefficient computation. If the value from the

@@ -1753,6 +1753,9 @@ void CConfig::SetConfig_Options() {
   /*!\brief MG_DAMP_PROLONGATION\n DESCRIPTION: Damping factor for the correction prolongation. DEFAULT 0.75 \ingroup Config*/
   addDoubleOption("MG_DAMP_PROLONGATION", Damp_Correc_Prolong, 0.75);
 
+  /*!\brief TIME_AVERAGE_START_ITER \n DESCRIPTION: Iteration when to begin time averaging. DEFAULT: 0 \ingroup Config*/
+  addUnsignedShortOption("TIME_AVERAGE_START_ITER", startTimeAvgIter, 0);
+
   /*!\par CONFIG_CATEGORY: Spatial Discretization \ingroup Config*/
   /*--- Options related to the spatial discretization ---*/
 

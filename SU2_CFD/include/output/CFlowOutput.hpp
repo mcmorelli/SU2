@@ -133,5 +133,5 @@ protected:
    * \param iPoint
    * \param node_flow
    */
-  void LoadTimeAveragedData(unsigned long iPoint, CVariable *node_flow);
+  void LoadTimeAveragedData(CConfig *config, unsigned long iPoint, CVariable *node_flow);
 };
