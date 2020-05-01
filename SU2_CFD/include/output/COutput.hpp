@@ -63,6 +63,9 @@ protected:
 
   unsigned short nDim;   /*!< \brief Physical Dimension */
 
+  unsigned long averageIter;    /*!< \brief Global value when to begin averaging time accurate problems */
+  bool restartSolution;         /*!< \brief Boolean to store whether we are restarting a simulation */
+
   bool multiZone,       /*!< \brief Boolean to store whether we are running a multizone problem */
   gridMovement,         /*!< \brief Boolean to store whether we have grid movement enabled */
   femOutput;            /*!< \brief Boolean to store whether we should use the FEM routines */

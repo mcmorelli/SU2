@@ -111,6 +111,10 @@ COutput::COutput(CConfig *config, unsigned short nDim, bool fem_output): femOutp
 
   multiZone     = config->GetMultizone_Problem();
 
+  /*--- Initialize averaging variables ---*/
+  averageIter = config->GetstartTimeAvgIter();
+  restartSolution = config->GetRestart();
+
   /*--- Default is to write history to file and screen --- */
 
   noWriting = false;
@@ -1692,7 +1696,19 @@ su2double COutput::GetVolumeOutputValue(string name, unsigned long iPoint){
 
 void COutput::SetAvgVolumeOutputValue(string name, unsigned long iPoint, su2double value){
 
-  const su2double scaling = 1.0 / su2double(curAbsTimeIter + 1);
+  su2double scaling = 0.0;
+  su2double iter = 0.0;
+
+  if (restartSolution){
+    scaling = 1.0 / su2double(curAbsTimeIter + 1);
+  }
+  else if (curTimeIter >= averageIter && !restartSolution){
+    iter = curTimeIter - averageIter;
+    scaling = 1.0 / (iter + 1);
+  }
+  else{
+    scaling = 1.0;
+  }
 
   if (buildFieldIndexCache){
 
