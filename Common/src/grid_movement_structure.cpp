@@ -2437,6 +2437,182 @@ void CVolumetricMovement::Rigid_Translation(CGeometry *geometry, CConfig *config
   
 }
 
+void CVolumetricMovement::Blade_Rotation(CGeometry *geometry, CConfig *config,
+                                         unsigned short iZone, unsigned long iter) {
+
+    /*--- Rotation of the blades in the hub fixed frame of reference ---*/
+
+    /*--- Local variables ---*/
+
+    unsigned short iDim, nDim;
+    unsigned long iPoint;
+    su2double r[3] = {0.0,0.0,0.0}, rotCoord[3] = {0.0,0.0,0.0}, *Coord;
+    su2double Center[3] = {0.0,0.0,0.0}, Omega[3] = {0.0,0.0,0.0}, Lref;
+    su2double dt, Center_Moment[3] = {0.0,0.0,0.0};
+    su2double *GridVel, newGridVel[3] = {0.0,0.0,0.0}, initGridVel[3] = {0.0,0.0,0.0};
+    su2double rotMatrix[3][3] = {{0.0,0.0,0.0}, {0.0,0.0,0.0}, {0.0,0.0,0.0}};
+    su2double dtheta, dphi, dpsi, cosTheta, sinTheta;
+    su2double cosPhi, sinPhi, cosPsi, sinPsi;
+    bool harmonic_balance = (config->GetTime_Marching() == HARMONIC_BALANCE);
+    bool adjoint = config->GetContinuous_Adjoint();
+
+    su2double theta, phi, psi;
+    su2double DEG2RAD = PI_NUMBER / 180.0;
+    su2double RAD2DEG = 180.0 / PI_NUMBER;
+
+    /*--- Problem dimension and physical time step ---*/
+
+    nDim = geometry->GetnDim();
+    dt   = config->GetDelta_UnstTimeND();
+    Lref = config->GetLength_Ref();
+
+    if (iter == 0) dt = 0;
+
+    /*--- Center of rotation & angular velocity vector from config ---*/
+
+    Center[0] = config->GetHub_Origin(0);
+    Center[1] = config->GetHub_Origin(1);
+    Center[2] = config->GetHub_Origin(2);
+    Omega[0]  = (config->GetBlade_Rotation_Rate(0)/config->GetOmega_Ref());
+    Omega[1]  = (config->GetBlade_Rotation_Rate(1)/config->GetOmega_Ref());
+    Omega[2]  = (config->GetBlade_Rotation_Rate(2)/config->GetOmega_Ref());
+
+    /*-- Set dt for harmonic balance cases ---*/
+
+    if (harmonic_balance) {
+
+        /*--- period of oscillation & compute time interval using nTimeInstances ---*/
+
+        su2double period = config->GetHarmonicBalance_Period();
+        period /= config->GetTime_Ref();
+        dt = period * (su2double)iter/(su2double)(config->GetnTimeInstances());
+    }
+
+    /*--- Compute delta change in the angle about the x, y, & z axes. ---*/
+
+    dtheta = Omega[0]*dt;
+    dphi   = Omega[1]*dt;
+    dpsi   = Omega[2]*dt;
+
+    if (rank == MASTER_NODE && iter == 0) {
+        cout << " Blade rotational velocity: (" << Omega[0] << ", " << Omega[1];
+        cout << ", " << Omega[2] << ") rad/s." << endl;
+    }
+
+    /*--- Store angles separately for clarity. Compute sines/cosines. ---*/
+
+    cosTheta = cos(dtheta);  cosPhi = cos(dphi);  cosPsi = cos(dpsi);
+    sinTheta = sin(dtheta);  sinPhi = sin(dphi);  sinPsi = sin(dpsi);
+
+    /*--- Compute the rotation matrix. Note that the implicit
+   ordering is rotation about the x-axis, y-axis, then z-axis. ---*/
+
+    rotMatrix[0][0] = cosPhi*cosPsi;
+    rotMatrix[1][0] = cosPhi*sinPsi;
+    rotMatrix[2][0] = -sinPhi;
+
+    rotMatrix[0][1] = sinTheta*sinPhi*cosPsi - cosTheta*sinPsi;
+    rotMatrix[1][1] = sinTheta*sinPhi*sinPsi + cosTheta*cosPsi;
+    rotMatrix[2][1] = sinTheta*cosPhi;
+
+    rotMatrix[0][2] = cosTheta*sinPhi*cosPsi + sinTheta*sinPsi;
+    rotMatrix[1][2] = cosTheta*sinPhi*sinPsi - sinTheta*cosPsi;
+    rotMatrix[2][2] = cosTheta*cosPhi;
+
+    /*--- Loop over and rotate each node in the volume mesh ---*/
+
+    for (iPoint = 0; iPoint < geometry->GetnPoint(); iPoint++) {
+
+        /*--- Initialize the grid velocity ---*/
+
+        if (iter == 0){
+            for (iDim = 0; iDim < nDim; iDim++) {
+                if (!adjoint) geometry->node[iPoint]->SetGridVel(iDim, initGridVel[iDim]);
+            }
+        }
+
+        /*--- Coordinates of the current point ---*/
+
+        Coord   = geometry->node[iPoint]->GetCoord();
+        GridVel = geometry->node[iPoint]->GetGridVel();
+
+        /*--- Calculate non-dim. position from rotation center ---*/
+
+        r[0] = (Coord[0]-Center[0])/Lref;
+        r[1] = (Coord[1]-Center[1])/Lref;
+        if (nDim == 3) r[2] = (Coord[2]-Center[2])/Lref;
+
+        /*--- Compute transformed point coordinates ---*/
+
+        rotCoord[0] = rotMatrix[0][0]*r[0]
+                      + rotMatrix[0][1]*r[1]
+                      + rotMatrix[0][2]*r[2];
+
+        rotCoord[1] = rotMatrix[1][0]*r[0]
+                      + rotMatrix[1][1]*r[1]
+                      + rotMatrix[1][2]*r[2];
+
+        rotCoord[2] = rotMatrix[2][0]*r[0]
+                      + rotMatrix[2][1]*r[1]
+                      + rotMatrix[2][2]*r[2];
+
+        /*--- Cross Product of angular velocity and distance from center.
+         Note that we have assumed the grid velocities have been set to
+         an initial value in the plunging routine. ---*/
+
+        newGridVel[0] = GridVel[0] + Omega[1]*rotCoord[2] - Omega[2]*rotCoord[1];
+        newGridVel[1] = GridVel[1] + Omega[2]*rotCoord[0] - Omega[0]*rotCoord[2];
+        newGridVel[2] = GridVel[2] + Omega[0]*rotCoord[1] - Omega[1]*rotCoord[0];
+
+        /*--- Store new node location & grid velocity. Add center.
+         Do not store the grid velocity if this is an adjoint calculation.---*/
+
+        for (iDim = 0; iDim < nDim; iDim++) {
+            geometry->node[iPoint]->SetCoord(iDim, rotCoord[iDim] + Center[iDim]);
+            //geometry->node[iPoint]->SetGridVel(iDim, newGridVel[iDim]);
+        }
+    }
+
+    /*--- Set the moment computation center to the new location after
+     incrementing the position with the rotation. ---*/
+
+    for (unsigned short jMarker=0; jMarker<config->GetnMarker_Monitoring(); jMarker++) {
+
+        Center_Moment[0] = config->GetRefOriginMoment_X(jMarker);
+        Center_Moment[1] = config->GetRefOriginMoment_Y(jMarker);
+        Center_Moment[2] = config->GetRefOriginMoment_Z(jMarker);
+
+        /*--- Calculate non-dim. position from rotation center ---*/
+
+        for (iDim = 0; iDim < nDim; iDim++)
+            r[iDim] = (Center_Moment[iDim]-Center[iDim])/Lref;
+        if (nDim == 2) r[nDim] = 0.0;
+
+        /*--- Compute transformed point coordinates ---*/
+
+        rotCoord[0] = rotMatrix[0][0]*r[0]
+                      + rotMatrix[0][1]*r[1]
+                      + rotMatrix[0][2]*r[2];
+
+        rotCoord[1] = rotMatrix[1][0]*r[0]
+                      + rotMatrix[1][1]*r[1]
+                      + rotMatrix[1][2]*r[2];
+
+        rotCoord[2] = rotMatrix[2][0]*r[0]
+                      + rotMatrix[2][1]*r[1]
+                      + rotMatrix[2][2]*r[2];
+
+        config->SetRefOriginMoment_X(jMarker, Center[0]+rotCoord[0]);
+        config->SetRefOriginMoment_Y(jMarker, Center[1]+rotCoord[1]);
+        config->SetRefOriginMoment_Z(jMarker, Center[2]+rotCoord[2]);
+    }
+
+    /*--- After moving all nodes, update geometry class ---*/
+
+    UpdateDualGrid(geometry, config);
+
+}
+
 void CVolumetricMovement::SetVolume_Scaling(CGeometry *geometry, CConfig *config, bool UpdateGeo) {
 
   unsigned short iDim;
@@ -6260,6 +6436,408 @@ void CSurfaceMovement::Surface_Rotating(CGeometry *geometry, CConfig *config,
     config->SetRefOriginMoment_Y(jMarker, Center_Aux[1]+VarCoord[1]);
     config->SetRefOriginMoment_Z(jMarker, Center_Aux[2]+VarCoord[2]);
   }
+}
+
+void CSurfaceMovement::Blade_Kinematics(CGeometry *geometry, CConfig *config, unsigned long iter, unsigned short iZone) {
+
+    /*--- Routine for computing the rotor blade kinematics ---*/
+
+    unsigned short iMarker, jMarker, Moving, iDim, nDim = geometry->GetnDim();
+    unsigned long iPoint, iVertex;
+    string Marker_Tag, Moving_Tag;
+    su2double deltaT, time_new, time_old, Lref, *Coord;
+    su2double Psi, Psi_old, psi, Beta, Delta, Theta;
+    su2double hubCoord[3], hingeCoord[3], localHingeCoord[3], offsetCoord[3];
+    su2double rotationalVel[3];
+    su2double rotCoord1[3], rotCoord2[3], rotCoord3[3];
+    su2double rHinge[3], r1[3], r2[3], r3[3];
+    su2double rotMatrix[3][3], hub2Blade[3][3], blade2Hub[3][3];
+    su2double DEG2RAD = PI_NUMBER / 180.0, RAD2DEG = 180.0 / PI_NUMBER;
+    su2double VarCoord[3];
+
+    unsigned short nMarkers = config->GetnMarker_Moving();
+    su2double bladePhase[nMarkers];
+
+    /*--- Initialize ---*/
+
+    for (unsigned short i = 0; i < nMarkers; i++){
+        bladePhase[i] = 0.0;
+    }
+
+    VarCoord[0] = 0.0;
+    VarCoord[1] = 0.0;
+    VarCoord[2] = 0.0;
+
+    /*--- Retrieve values from the config file ---*/
+
+    deltaT  = config->GetDelta_UnstTimeND();
+    Lref    = config->GetLength_Ref();
+
+    for (iDim = 0; iDim < nDim; iDim++){
+        hubCoord[iDim]      = config->GetHub_Origin(iDim);
+        hingeCoord[iDim]    = config->GetHinge_Origin(iDim);
+        rotationalVel[iDim] = config->GetBlade_Rotation_Rate(iDim) / config->GetOmega_Ref();
+    }
+
+    su2double collectivePitch         = config -> GetBlade_Pitch_Motion(0) * DEG2RAD;
+    su2double longitudinalPitch_1     = config -> GetBlade_Pitch_Motion(1) * DEG2RAD;
+    su2double lateralPitch_1          = config -> GetBlade_Pitch_Motion(2) * DEG2RAD;
+    su2double longitudinalPitch_2     = config -> GetBlade_Pitch_Motion(3) * DEG2RAD;
+    su2double lateralPitch_2          = config -> GetBlade_Pitch_Motion(4) * DEG2RAD;
+    su2double longitudinalPitch_3     = config -> GetBlade_Pitch_Motion(5) * DEG2RAD;
+    su2double lateralPitch_3          = config -> GetBlade_Pitch_Motion(6) * DEG2RAD;
+
+    su2double rotorConing             = config -> GetBlade_Flap_Motion(0) * DEG2RAD;
+    su2double longitudinalFlapping_1  = config -> GetBlade_Flap_Motion(1) * DEG2RAD;
+    su2double lateralFlapping_1       = config -> GetBlade_Flap_Motion(2) * DEG2RAD;
+    su2double longitudinalFlapping_2  = config -> GetBlade_Flap_Motion(3) * DEG2RAD;
+    su2double lateralFlapping_2       = config -> GetBlade_Flap_Motion(4) * DEG2RAD;
+    su2double longitudinalFlapping_3  = config -> GetBlade_Flap_Motion(5) * DEG2RAD;
+    su2double lateralFlapping_3       = config -> GetBlade_Flap_Motion(6) * DEG2RAD;
+
+    su2double LeadLag_0               = config -> GetBlade_LeadLag_Motion(0) * DEG2RAD;
+    su2double longitudinalLeadLag_1   = config -> GetBlade_LeadLag_Motion(1) * DEG2RAD;
+    su2double lateralLeadLag_1        = config -> GetBlade_LeadLag_Motion(2) * DEG2RAD;
+    su2double longitudinalLeadLag_2   = config -> GetBlade_LeadLag_Motion(3) * DEG2RAD;
+    su2double lateralLeadLag_2        = config -> GetBlade_LeadLag_Motion(4) * DEG2RAD;
+    su2double longitudinalLeadLag_3   = config -> GetBlade_LeadLag_Motion(5) * DEG2RAD;
+    su2double lateralLeadLag_3        = config -> GetBlade_LeadLag_Motion(6) * DEG2RAD;
+
+    /*--- Compute delta time based on physical time step ---*/
+
+    time_new = static_cast<su2double>(iter) * deltaT;
+    if (iter == 0) {
+        time_old = time_new;
+    } else {
+        time_old = static_cast<su2double>(iter - 1) * deltaT;
+    }
+
+    /*--- Routine for applying the blade kinematics ---*/
+
+    for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+        Moving = config->GetMarker_All_Moving(iMarker);
+        if (Moving == YES) {
+            for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+
+                Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
+                Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+
+                if (Marker_Tag == Moving_Tag) {
+
+                    bladePhase[jMarker] = config->GetBlade_Phase(jMarker) * DEG2RAD;
+
+                    /*--- Compute the angles for the rotation matrices ---*/
+
+                    if (config->GetCoord_Sys() == X_AXIS) {
+                        Psi     = rotationalVel[0] * (time_new) + bladePhase[jMarker];
+                        Psi_old = rotationalVel[0] * (time_old) + bladePhase[jMarker];
+                    }
+                    else if (config->GetCoord_Sys() == Y_AXIS) {
+                        Psi     = rotationalVel[1] * (time_new) + bladePhase[jMarker];
+                        Psi_old = rotationalVel[1] * (time_old) + bladePhase[jMarker];
+                    }
+                    else {
+                        Psi     = rotationalVel[2] * (time_new) + bladePhase[jMarker];
+                        Psi_old = rotationalVel[2] * (time_old) + bladePhase[jMarker];
+                    }
+
+                    if (iter == 0) {
+                        Beta  = rotorConing
+                                + longitudinalFlapping_1 * sin(Psi)      + lateralFlapping_1 * cos(Psi)
+                                + longitudinalFlapping_2 * sin(2*Psi) + lateralFlapping_2 * cos(2*Psi)
+                                + longitudinalFlapping_3 * sin(3*Psi) + lateralFlapping_3 * cos(3*Psi);
+
+                        Delta = LeadLag_0
+                                + longitudinalLeadLag_1 * sin(Psi)      + lateralLeadLag_1 * cos(Psi)
+                                + longitudinalLeadLag_2 * sin(2*Psi) + lateralLeadLag_2 * cos(2*Psi)
+                                + longitudinalLeadLag_3 * sin(3*Psi) + lateralLeadLag_3 * cos(3*Psi);
+
+                        Theta = collectivePitch
+                                + longitudinalPitch_1 * sin(Psi)       + lateralPitch_1 * cos(Psi)
+                                + longitudinalPitch_2 * sin(2*Psi)  + lateralPitch_2 * cos(2*Psi)
+                                + longitudinalPitch_3 * sin(3*Psi)  + lateralPitch_3 * cos(3*Psi);
+                    }
+                    else{
+                        Beta  =  (  longitudinalFlapping_1 * sin(Psi)      + lateralFlapping_1 * cos(Psi)
+                                    + longitudinalFlapping_2 * sin(2*Psi) + lateralFlapping_2 * cos(2*Psi)
+                                    + longitudinalFlapping_3 * sin(3*Psi) + lateralFlapping_3 * cos(3*Psi))
+                                 -
+                                 (  longitudinalFlapping_1 * sin(Psi_old)      + lateralFlapping_1 * cos(Psi_old)
+                                    + longitudinalFlapping_2 * sin(2*Psi_old) + lateralFlapping_2 * cos(2*Psi_old)
+                                    + longitudinalFlapping_3 * sin(3*Psi_old) + lateralFlapping_3 * cos(3*Psi_old));
+
+
+                        Delta =  (  longitudinalLeadLag_1 * sin(Psi)      + lateralLeadLag_1 * cos(Psi)
+                                    + longitudinalLeadLag_2 * sin(2*Psi) + lateralLeadLag_2 * cos(2*Psi)
+                                    + longitudinalLeadLag_3 * sin(3*Psi) + lateralLeadLag_3 * cos(3*Psi))
+                                 -
+                                 (  longitudinalLeadLag_1 * sin(Psi_old)      + lateralLeadLag_1 * cos(Psi_old)
+                                    + longitudinalLeadLag_2 * sin(2*Psi_old) + lateralLeadLag_2 * cos(2*Psi_old)
+                                    + longitudinalLeadLag_3 * sin(3*Psi_old) + lateralLeadLag_3 * cos(3*Psi_old));
+
+                        Theta =  (  longitudinalPitch_1 * sin(Psi)      + lateralPitch_1 * cos(Psi)
+                                    + longitudinalPitch_2 * sin(2*Psi) + lateralPitch_2 * cos(2*Psi)
+                                    + longitudinalPitch_3 * sin(3*Psi) + lateralPitch_3 * cos(3*Psi))
+                                 -
+                                 (  longitudinalPitch_1 * sin(Psi_old)      + lateralPitch_1 * cos(Psi_old)
+                                    + longitudinalPitch_2 * sin(2*Psi_old) + lateralPitch_2 * cos(2*Psi_old)
+                                    + longitudinalPitch_3 * sin(3*Psi_old) + lateralPitch_3 * cos(3*Psi_old));
+                    }
+
+
+                    if (rank == MASTER_NODE) {
+                        stringstream motion;
+                        motion << Moving_Tag << " Cyclic: Flap = " << Beta*RAD2DEG << " deg\t Lead-Lag = "
+                        << Delta*RAD2DEG << " deg\t Pitch = " << Theta*RAD2DEG << " deg" << endl;
+                        cout << motion.str();
+                    }
+
+                    /*--- Compute the rotation matrices ---*/
+
+                    if (config->GetCoord_Sys() == X_AXIS) {
+                        hub2Blade[0][0] = 1.0;
+                        hub2Blade[1][0] = 0.0;
+                        hub2Blade[2][0] = 0.0;
+
+                        hub2Blade[0][1] = 0.0;
+                        hub2Blade[1][1] = cos(Psi);
+                        hub2Blade[2][1] = -sin(Psi);
+
+                        hub2Blade[0][2] = 0.0;
+                        hub2Blade[1][2] = sin(Psi);
+                        hub2Blade[2][2] = cos(Psi);
+
+                        //Z1-X2-Y3
+                        rotMatrix[0][0] = cos(Beta)*cos(Theta) - sin(Beta)*sin(Delta)*sin(Theta);
+                        rotMatrix[1][0] = cos(Theta)*sin(Beta) + cos(Beta)*sin(Delta)*sin(Theta);
+                        rotMatrix[2][0] = -cos(Delta)*sin(Theta);
+
+                        rotMatrix[0][1] = -cos(Delta)*sin(Beta);
+                        rotMatrix[1][1] = cos(Beta)*cos(Delta);
+                        rotMatrix[2][1] = sin(Delta);
+
+                        rotMatrix[0][2] = cos(Beta)*sin(Theta) + cos(Theta)*sin(Beta)*sin(Delta);
+                        rotMatrix[1][2] = sin(Beta)*sin(Theta) - cos(Beta)*cos(Theta)*sin(Delta);
+                        rotMatrix[2][2] = cos(Delta)*cos(Theta);
+
+                        blade2Hub[0][0] = 1.0;
+                        blade2Hub[1][0] = 0.0;
+                        blade2Hub[2][0] = 0.0;
+
+                        blade2Hub[0][1] = 0.0;
+                        blade2Hub[1][1] = cos(Psi);
+                        blade2Hub[2][1] = sin(Psi);
+
+                        blade2Hub[0][2] = 0.0;
+                        blade2Hub[1][2] = -sin(Psi);
+                        blade2Hub[2][2] = cos(Psi);
+                    }
+                    else if (config->GetCoord_Sys() == Y_AXIS) {
+                        hub2Blade[0][0] = cos(Psi);
+                        hub2Blade[1][0] = 0.0;
+                        hub2Blade[2][0] = sin(Psi);
+
+                        hub2Blade[0][1] = 0.0;
+                        hub2Blade[1][1] = 1.0;
+                        hub2Blade[2][1] = 0.0;
+
+                        hub2Blade[0][2] = -sin(Psi);
+                        hub2Blade[1][2] = 0.0;
+                        hub2Blade[2][2] = cos(Psi);
+
+                        //X1-Y2-Z3
+                        rotMatrix[0][0] = cos(Delta)*cos(Theta);
+                        rotMatrix[1][0] = cos(Beta)*sin(Theta) + cos(Theta)*sin(Beta)*sin(Delta);
+                        rotMatrix[2][0] = sin(Beta)*sin(Theta) - cos(Beta)*cos(Theta)*sin(Delta);
+
+                        rotMatrix[0][1] = -cos(Delta)*sin(Theta);
+                        rotMatrix[1][1] = cos(Beta)*cos(Theta) + sin(Beta)*sin(Delta)*sin(Theta);
+                        rotMatrix[2][1] = cos(Theta)*sin(Beta) + cos(Beta)*sin(Delta)*sin(Theta);
+
+                        rotMatrix[0][2] = sin(Delta);
+                        rotMatrix[1][2] = -cos(Delta)*sin(Beta);
+                        rotMatrix[2][2] = cos(Beta)*cos(Delta);
+
+                        blade2Hub[0][0] = cos(Psi);
+                        blade2Hub[1][0] = 0.0;
+                        blade2Hub[2][0] = -sin(Psi);
+
+                        blade2Hub[0][1] = 0.0;
+                        blade2Hub[1][1] = 1.0;
+                        blade2Hub[2][1] = 0.0;
+
+                        blade2Hub[0][2] = sin(Psi);
+                        blade2Hub[1][2] = 0.0;
+                        blade2Hub[2][2] = cos(Psi);
+                    }
+                    else {
+                        hub2Blade[0][0] = cos(Psi);
+                        hub2Blade[1][0] = -sin(Psi);
+                        hub2Blade[2][0] = 0.0;
+
+                        hub2Blade[0][1] = sin(Psi);
+                        hub2Blade[1][1] = cos(Psi);
+                        hub2Blade[2][1] = 0.0;
+
+                        hub2Blade[0][2] = 0.0;
+                        hub2Blade[1][2] = 0.0;
+                        hub2Blade[2][2] = 1.0;
+
+                        //Y1-Z2-X3
+                        rotMatrix[0][0] = cos(Beta) * cos(Delta);
+                        rotMatrix[1][0] = sin(Delta);
+                        rotMatrix[2][0] = -cos(Delta) * sin(Beta);
+
+                        rotMatrix[0][1] = sin(Beta) * sin(Theta) - cos(Beta) * cos(Theta) * sin(Delta);
+                        rotMatrix[1][1] = cos(Delta) * cos(Theta);
+                        rotMatrix[2][1] = cos(Beta) * sin(Theta) + cos(Theta) * sin(Beta) * sin(Delta);
+
+                        rotMatrix[0][2] = cos(Theta) * sin(Beta) + cos(Beta) * sin(Delta) * sin(Theta);
+                        rotMatrix[1][2] = -cos(Delta) * sin(Theta);
+                        rotMatrix[2][2] = cos(Beta) * cos(Theta) - sin(Beta) * sin(Delta) * sin(Theta);
+
+                        blade2Hub[0][0] = cos(Psi);
+                        blade2Hub[1][0] = sin(Psi);
+                        blade2Hub[2][0] = 0.0;
+
+                        blade2Hub[0][1] = -sin(Psi);
+                        blade2Hub[1][1] = cos(Psi);
+                        blade2Hub[2][1] = 0.0;
+
+                        blade2Hub[0][2] = 0.0;
+                        blade2Hub[1][2] = 0.0;
+                        blade2Hub[2][2] = 1.0;
+                    }
+
+                    /*--- Calculate distance from hub to hinge center ---*/
+
+                    for (iDim = 0; iDim < nDim; iDim++){
+                        rHinge[iDim] = (hingeCoord[iDim] - hubCoord[iDim]);
+                    }
+
+                    /*--- Compute the blade local hinge position ---*/
+
+                    localHingeCoord[0] = hub2Blade[0][0] * rHinge[0]
+                                         + hub2Blade[0][1] * rHinge[1]
+                                         + hub2Blade[0][2] * rHinge[2]
+                                         + hubCoord[0];
+
+                    localHingeCoord[1] = hub2Blade[1][0] * rHinge[0]
+                                         + hub2Blade[1][1] * rHinge[1]
+                                         + hub2Blade[1][2] * rHinge[2]
+                                         + hubCoord[1];
+
+                    localHingeCoord[2] = hub2Blade[2][0] * rHinge[0]
+                                         + hub2Blade[2][1] * rHinge[1]
+                                         + hub2Blade[2][2] * rHinge[2]
+                                         + hubCoord[2];
+
+                    /*--- Apply the blade kinematics to each surface node ---*/
+
+                    for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+
+                        /*--- Index and coordinates of the current point ---*/
+
+                        iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+                        Coord = geometry->node[iPoint]->GetCoord();
+
+                        /*--- Account for hinge offset ---*/
+
+                        for (iDim = 0; iDim < nDim; iDim++){
+                            offsetCoord[iDim] = Coord[iDim] - localHingeCoord[iDim];
+                        }
+
+                        /*--- Calculate non-dim. position from rotation center to the hub ---*/
+
+                        for (iDim = 0; iDim < nDim; iDim++){
+                            r1[iDim] = (offsetCoord[iDim] - hubCoord[iDim]) / Lref;
+                        }
+
+                        /* --- Step 1: Transformation of coordinates into blade reference frame system ---*/
+
+                        rotCoord1[0] = hub2Blade[0][0] * r1[0]
+                                       + hub2Blade[0][1] * r1[1]
+                                       + hub2Blade[0][2] * r1[2]
+                                       + hubCoord[0];
+
+                        rotCoord1[1] = hub2Blade[1][0] * r1[0]
+                                       + hub2Blade[1][1] * r1[1]
+                                       + hub2Blade[1][2] * r1[2]
+                                       + hubCoord[1];
+
+                        rotCoord1[2] = hub2Blade[2][0] * r1[0]
+                                       + hub2Blade[2][1] * r1[1]
+                                       + hub2Blade[2][2] * r1[2]
+                                       + hubCoord[2];
+
+                        /*--- Calculate non-dim. position from rotation center to the hub---*/
+
+                        for (iDim = 0; iDim < nDim; iDim++){
+                            r2[iDim] = (rotCoord1[iDim] - hubCoord[iDim]) / Lref;
+                        }
+
+                        /* --- Step 2: Blade kinematics applied in the blade reference frame system ---*/
+
+                        rotCoord2[0] = rotMatrix[0][0] * r2[0]
+                                       + rotMatrix[0][1] * r2[1]
+                                       + rotMatrix[0][2] * r2[2]
+                                       + hubCoord[0];
+
+                        rotCoord2[1] = rotMatrix[1][0] * r2[0]
+                                       + rotMatrix[1][1] * r2[1]
+                                       + rotMatrix[1][2] * r2[2]
+                                       + hubCoord[1];
+
+                        rotCoord2[2] = rotMatrix[2][0] * r2[0]
+                                       + rotMatrix[2][1] * r2[1]
+                                       + rotMatrix[2][2] * r2[2]
+                                       + hubCoord[2];
+
+                        /*--- Calculate non-dim. position from rotation center to the hub location---*/
+
+                        for (iDim = 0; iDim < nDim; iDim++){
+                            r3[iDim] = (rotCoord2[iDim] - hubCoord[iDim]) / Lref;
+                        }
+
+                        /* --- Step 3: Transformation of coordinates back into hub reference frame system ---*/
+
+                        rotCoord3[0] = blade2Hub[0][0] * r3[0]
+                                       + blade2Hub[0][1] * r3[1]
+                                       + blade2Hub[0][2] * r3[2]
+                                       + hubCoord[0];
+
+                        rotCoord3[1] = blade2Hub[1][0] * r3[0]
+                                       + blade2Hub[1][1] * r3[1]
+                                       + blade2Hub[1][2] * r3[2]
+                                       + hubCoord[1];
+
+                        rotCoord3[2] = blade2Hub[2][0] * r3[0]
+                                       + blade2Hub[2][1] * r3[1]
+                                       + blade2Hub[2][2] * r3[2]
+                                       + hubCoord[2];
+
+                        /*--- Account for hinge offset ---*/
+
+                        for (iDim = 0; iDim < nDim; iDim++){
+                            rotCoord3[iDim] = rotCoord3[iDim] + localHingeCoord[iDim];
+                        }
+
+                        /*--- Calculate delta change in the x, y, & z directions ---*/
+
+                        for (iDim = 0; iDim < nDim; iDim++){
+                            VarCoord[iDim] = (rotCoord3[iDim] - Coord[iDim]) / Lref;
+                        }
+
+                        /*--- Set node displacement for volume deformation ---*/
+
+                        geometry->vertex[iMarker][iVertex]->SetVarCoord(VarCoord);
+
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 void CSurfaceMovement::AeroelasticDeform(CGeometry *geometry, CConfig *config, unsigned long TimeIter, unsigned short iMarker, unsigned short iMarker_Monitoring, vector<su2double>& displacements) {

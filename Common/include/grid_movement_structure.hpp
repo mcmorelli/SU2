@@ -1240,6 +1240,15 @@ public:
   virtual void SetVolume_Deformation_Elas(CGeometry *geometry, CConfig *config, bool UpdateGeo, bool screen_output, bool Derivative = false);
 
   /*!
+   * \brief Unsteady grid movement using rigid mesh rotation.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] iZone - Zone number in the mesh.
+   * \param[in] iter - Physical time iteration number.
+   */
+  void Blade_Rotation(CGeometry *geometry, CConfig *config, unsigned short iZone, unsigned long iter);
+
+  /*!
    * \brief Set the derivatives of the boundary nodes.
    * \param[in] geometry - Geometrical definition of the problem.
    * \param[in] config - Definition of the particular problem.
@@ -1610,7 +1619,17 @@ public:
    */
   void Surface_Rotating(CGeometry *geometry, CConfig *config,
                         unsigned long iter, unsigned short iZone);
-  
+
+  /*!
+   * \brief Computes the kinematics of rotor blades.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] iter - Current physical time iteration.
+   * \param[in] iZone - Zone number in the mesh.
+   */
+  void Blade_Kinematics(CGeometry *geometry, CConfig *config,
+                    unsigned long iter, unsigned short iZone);
+
   /*!
    * \brief Computes the displacement of a rotating surface for a dynamic mesh simulation.
    * \param[in] geometry - Geometrical definition of the problem.

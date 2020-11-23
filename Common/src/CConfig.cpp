@@ -958,6 +958,19 @@ void CConfig::SetPointersNull(void) {
   Periodic_Translate  = NULL;    Periodic_Rotation   = NULL;    Periodic_Center     = NULL;
   Periodic_Translation= NULL;    Periodic_RotAngles  = NULL;    Periodic_RotCenter  = NULL;
 
+  /*--- rotorcraft pointers and defaults. ---*/
+
+  Blade_Rotation_Rate   = NULL;
+  Hub_Origin            = NULL;
+  Hinge_Origin          = NULL;
+  Blade_Phase           = NULL;
+  Blade_Pitch_Motion    = NULL;
+  Blade_Flap_Motion     = NULL;
+  Blade_LeadLag_Motion  = NULL;
+  default_Blade_Pitch_Motion    = NULL;
+  default_Blade_Flap_Motion     = NULL;
+  default_Blade_LeadLag_Motion  = NULL;
+
   /* Harmonic Balance Frequency pointer */
 
   Omega_HB = NULL;
@@ -1076,6 +1089,11 @@ void CConfig::SetConfig_Options() {
   CpPolyCoefficientsND  = new su2double[nPolyCoeffs]();
   MuPolyCoefficientsND  = new su2double[nPolyCoeffs]();
   KtPolyCoefficientsND  = new su2double[nPolyCoeffs]();
+
+  /*--- allocating memory for up to 3 higher harmonics ---*/
+  default_Blade_Pitch_Motion    = new su2double[7];
+  default_Blade_Flap_Motion     = new su2double[7];
+  default_Blade_LeadLag_Motion  = new su2double[7];
 
   // This config file is parsed by a number of programs to make it easy to write SU2
   // wrapper scripts (in python, go, etc.) so please do
@@ -2081,7 +2099,33 @@ void CConfig::SetConfig_Options() {
   /* DESCRIPTION: Value to move motion origins (1 or 0) */
   addUShortListOption("MOVE_MOTION_ORIGIN", nMoveMotion_Origin, MoveMotion_Origin);
 
-  /*!\par CONFIG_CATEGORY: Grid adaptation \ingroup Config*/
+  /*!\par CONFIG_CATEGORY: Rotorcraft simulations \ingroup Config*/
+  /*---  Options related to rotorcraft simulations ---*/
+
+  /* DESCRIPTION: Definition of the Coordinate system */
+  addEnumOption("COORD_SYS", Coord_Sys, Coord_Sys_Map, Z_AXIS);
+  /* DESCRIPTION: Angular velocity vector (rad/s) about x, y, & z axes */
+  addDoubleListOption("BLADE_ROTATION_RATE", nBlade_Rotation_Rate, Blade_Rotation_Rate);
+  /* DESCRIPTION: Coordinates of the hub motion origin */
+  addDoubleListOption("HUB_ORIGIN", nHub_Origin, Hub_Origin);
+  /* DESCRIPTION: Coordinates of the hinge */
+  addDoubleListOption("HINGE_ORIGIN", nHinge_Origin, Hinge_Origin);
+  /* DESCRIPTION: Rotor blade phase offset (degrees) about x, y, & z axes */
+  addDoubleListOption("BLADE_PHASE", nBlade_Phase, Blade_Phase);
+
+  for (int i = 0; i < 7; i++) {
+      default_Blade_Pitch_Motion[i] = 0.0;
+      default_Blade_Flap_Motion[i] = 0.0;
+      default_Blade_LeadLag_Motion[i] = 0.0;
+  }
+  /* DESCRIPTION: Rotor blade pitch motion in blade ref system */
+  addDoubleArrayOption("BLADE_PITCH_MOTION", 7, Blade_Pitch_Motion, default_Blade_Pitch_Motion);
+  /* DESCRIPTION: Rotor blade pitch motion in blade ref system */
+  addDoubleArrayOption("BLADE_FLAP_MOTION", 7, Blade_Flap_Motion, default_Blade_Flap_Motion);
+  /* DESCRIPTION: Rotor blade pitch motion in blade ref system */
+  addDoubleArrayOption("BLADE_LEADLAG_MOTION", 7, Blade_LeadLag_Motion, default_Blade_LeadLag_Motion);
+
+    /*!\par CONFIG_CATEGORY: Grid adaptation \ingroup Config*/
   /*--- Options related to grid adaptation ---*/
 
   /* DESCRIPTION: Kind of grid adaptation */
@@ -7832,6 +7876,10 @@ CConfig::~CConfig(void) {
   if (VolumeOutputFiles != NULL) delete [] VolumeOutputFiles;
 
   if (ConvField != NULL) delete [] ConvField;
+
+  if (default_Blade_Pitch_Motion    != NULL) delete [] default_Blade_Pitch_Motion;
+  if (default_Blade_Flap_Motion     != NULL) delete [] default_Blade_Flap_Motion;
+  if (default_Blade_LeadLag_Motion  != NULL) delete [] default_Blade_LeadLag_Motion;
 
 }
 

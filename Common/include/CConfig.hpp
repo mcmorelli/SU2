@@ -430,6 +430,8 @@ private:
   unsigned short* nDV_Value;           /*!< \brief Number of values for each design variable (might be different than 1 if we allow arbitrary movement). */
   unsigned short nFFDBox;              /*!< \brief Number of ffd boxes. */
   unsigned short nTurboMachineryKind;  /*!< \brief Number turbomachinery types specified. */
+  unsigned short nCoord_Sys;           /*!< \brief Number of coordinate systems for rotor blade kinematics. */
+  unsigned short Coord_Sys;            /*!< \brief Definition of coordinate system for rotor blade kinematics. */
   unsigned short nParamDV;             /*!< \brief Number of parameters of the design variable. */
   string DV_Filename;                  /*!< \brief Filename for providing surface positions from an external parameterization. */
   string DV_Unordered_Sens_Filename;   /*!< \brief Filename of volume sensitivities in an unordered ASCII format. */
@@ -920,6 +922,23 @@ private:
   *MarkerPitching_Phase,          /*!< \brief Pitching phase offset of marker. */
   *MarkerPlunging_Omega,          /*!< \brief Angular frequency of marker.. */
   *MarkerPlunging_Ampl;           /*!< \brief Plunging amplitude of marker. */
+
+  su2double *Blade_Rotation_Rate,         /*!< \brief Blade angular velocity. */
+  *Hub_Origin,                            /*!< \brief Coordinates of the hub origin. */
+  *Hinge_Origin,                          /*!< \brief Coordinates of the hinge origin. */
+  *Blade_Phase,                           /*!< \brief Blade azimuthal phase. */
+  *Blade_Pitch_Motion,                    /*!< \brief Blade pitching motion. */
+  *Blade_Flap_Motion,                     /*!< \brief Blade flapping motion. */
+  *Blade_LeadLag_Motion;                  /*!< \brief Blade leadlag motion. */
+
+  unsigned short nBlade_Rotation_Rate,    /*!< \brief Number of angular rotor velocities for mesh motion. */
+  nHub_Origin,                            /*!< \brief Number of hub motion origins. */
+  nHinge_Origin,                          /*!< \brief Number of hinge origins. */
+  nBlade_Phase;                           /*!< \brief Number of blades phase offsets. */
+
+  su2double *default_Blade_Pitch_Motion,  /*!< \brief Number of blade pitching motion.*/
+  *default_Blade_Flap_Motion,             /*!< \brief Number of blade flapping motion.*/
+  *default_Blade_LeadLag_Motion;          /*!< \brief Number of blade leadlag motion. */
 
   unsigned short
   nMarkerMotion_Origin,           /*!< \brief Number of values provided for mesh motion origin of marker. */
@@ -5616,6 +5635,12 @@ public:
   void SetKind_GridMovement(unsigned short motion_Type) { Kind_GridMovement = motion_Type; }
 
   /*!
+   * \brief Get the definition of the coordinate system.
+   * \return Type of coordinate system.
+   */
+  unsigned short GetCoord_Sys() const { return Coord_Sys; }
+
+  /*!
    * \brief Get the type of surface motion.
    * \param[in] iMarkerMoving -  Index of the moving marker (as specified in Marker_Moving).
    * \return Type of surface motion.
@@ -5772,6 +5797,55 @@ public:
    * \return Plunging amplitude of the marker.
    */
   su2double GetMarkerPlunging_Ampl(unsigned short iMarkerMoving, unsigned short iDim) const { return MarkerPlunging_Ampl[3*iMarkerMoving + iDim];}
+
+  /*!
+   * \brief Get the blade rotation rate.
+   * \param[in] iDim - spatial component
+   * \return The x, y, z components of the rotation.
+   */
+  su2double GetBlade_Rotation_Rate(unsigned short iDim) const { return Blade_Rotation_Rate[iDim]; }
+
+  /*!
+   * \brief Get the values of the blade pitching motion.
+   * \param[in] iCyclic - higher harmonic cyclic coefficient
+   * \return The coefficient
+   */
+  su2double GetBlade_Pitch_Motion(unsigned short iCyclic) const { return Blade_Pitch_Motion[iCyclic]; }
+
+  /*!
+   * \brief Get the values of the blade flapping motion.
+   * \param[in] iCyclic - higher harmonic cyclic coefficient
+   * \return The coefficient
+   */
+  su2double GetBlade_Flap_Motion(unsigned short iCyclic) const { return Blade_Flap_Motion[iCyclic]; }
+
+  /*!
+   * \brief Get the values of the leadlag motion.
+   * \param[in] iCyclic - higher harmonic cyclic coefficient
+   * \return The coefficient
+   */
+  su2double GetBlade_LeadLag_Motion(unsigned short iCyclic) const { return Blade_LeadLag_Motion[iCyclic]; }
+
+  /*!
+   * \brief Get the hub origin.
+   * \param[in] iDim - spatial component
+   * \return The x, y, z components of the hub position.
+   */
+  su2double GetHub_Origin(unsigned short iDim) const { return Hub_Origin[iDim]; }
+
+  /*!
+   * \brief Get the hinge origin.
+   * \param[in] iDim - spatial component
+   * \return The x, y, z components of the hinge position.
+   */
+  su2double GetHinge_Origin(unsigned short iDim) const { return Hinge_Origin[iDim]; }
+
+  /*!
+   * \brief Get the phase of each blade.
+   * \param[in] iMarkerMoving - spatial component
+   * \return The azimuthal position of the blade.
+   */
+  su2double GetBlade_Phase(unsigned short iMarkerMoving) const { return Blade_Phase[iMarkerMoving]; }
 
   /*!
    * \brief Get the angular velocity of the mesh about the z-axis.

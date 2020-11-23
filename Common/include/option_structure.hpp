@@ -628,6 +628,7 @@ enum ENUM_GRIDMOVEMENT {
   RIGID_MOTION = 2,         /*!< \brief Simulation with rigid mesh motion (plunging/pitching/rotation). */
   ROTATING_FRAME = 8,       /*!< \brief Simulation in a rotating frame. */
   ELASTICITY = 9,           /*!< \brief Linear Elasticity. */
+  ROTORCRAFT = 10,          /*!< \brief Rotorcraft simulation combing both grid and surface movements. */
   STEADY_TRANSLATION = 11,  /*!< \brief Simulation in a steadily translating frame. */
   GUST = 12,                /*!< \brief Simulation on a static mesh with a gust. */
   MOVING_HTP = 13,          /*!< \brief Simulation with moving HTP (rotation). */
@@ -637,6 +638,7 @@ static const MapType<string, ENUM_GRIDMOVEMENT> GridMovement_Map = {
   MakePair("RIGID_MOTION", RIGID_MOTION)
   MakePair("ROTATING_FRAME", ROTATING_FRAME)
   MakePair("ELASTICITY", ELASTICITY)
+  MakePair("ROTORCRAFT", ROTORCRAFT)
   MakePair("MOVING_HTP", MOVING_HTP)
   MakePair("STEADY_TRANSLATION", STEADY_TRANSLATION)
   MakePair("GUST", GUST)
@@ -693,6 +695,20 @@ enum ENUM_GUST_DIR {
 static const MapType<string, ENUM_GUST_DIR> Gust_Dir_Map = {
   MakePair("X_DIR", X_DIR)
   MakePair("Y_DIR", Y_DIR)
+};
+
+/*!
+ * brief type of coordinate system for rotorcraft simulations
+ */
+enum ENUM_COORD_SYS_TYPE {
+  X_AXIS = 0,          /*!< \brief Rotation about the x-axis */
+  Y_AXIS = 1,          /*!< \brief Rotation about the y-axis */
+  Z_AXIS = 2           /*!< \brief Rotation about the z-axis */
+};
+static const map<string, ENUM_COORD_SYS_TYPE> Coord_Sys_Map = {
+  MakePair("X_AXIS", X_AXIS)
+  MakePair("Y_AXIS", Y_AXIS)
+  MakePair("Z_AXIS", Z_AXIS)
 };
 
 // If you add to ENUM_CENTERED, you must also add the option to ENUM_CONVECTIVE

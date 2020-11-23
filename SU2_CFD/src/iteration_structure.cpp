@@ -95,9 +95,35 @@ void CIteration::SetGrid_Movement(CGeometry **geometry,
   case STEADY_TRANSLATION: case ROTATING_FRAME:
     break;
 
+  case ROTORCRAFT:
+
+      if (rank == MASTER_NODE) {
+          cout << "Applying rotor blade kinematics." << endl << endl;
+      }
+
+      grid_movement->Blade_Rotation(geometry[MESH_0], config, val_iZone, TimeIter);
+
+      surface_movement->Blade_Kinematics(geometry[MESH_0], config, TimeIter, val_iZone);
+
+      if (rank == MASTER_NODE) {
+          cout << endl << "Deforming the volume grid. " << endl;
+      }
+
+      grid_movement->SetVolume_Deformation(geometry[MESH_0], config, true);
+
+      if (!adjoint) {
+          if (rank == MASTER_NODE)
+              cout << "Computing grid velocities by finite differencing." << endl;
+          geometry[MESH_0]->SetGridVelocity(config, TimeIter);
+      }
+
+      grid_movement->UpdateMultiGrid(geometry, config);
+
+      break;
+
   }
 
-  if (config->GetSurface_Movement(DEFORMING)){
+  if (config->GetSurface_Movement(DEFORMING) && Kind_Grid_Movement != ROTORCRAFT){
       if (rank == MASTER_NODE)
         cout << endl << " Updating surface positions." << endl;
 
