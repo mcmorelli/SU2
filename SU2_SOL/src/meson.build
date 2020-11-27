@@ -27,7 +27,8 @@ if get_option('enable-normal')
                                         'output/filewriter/CParaviewVTMFileWriter.cpp',
                                         'variables/CBaselineVariable.cpp',
                                         'variables/CVariable.cpp',
-                                        'limiters/CLimiterDetails.cpp'])
+                                        'limiters/CLimiterDetails.cpp',
+                                        'postprocessing_structure.cpp'])
 
   su2_sol = executable('SU2_SOL',
                       su2_sol_src, 

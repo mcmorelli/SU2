@@ -1127,6 +1127,28 @@ void CConfig::SetConfig_Options() {
   /*!\brief SYSTEM_MEASUREMENTS \n DESCRIPTION: System of measurements \n OPTIONS: see \link Measurements_Map \endlink \n DEFAULT: SI \ingroup Config*/
   addEnumOption("SYSTEM_MEASUREMENTS", SystemMeasurements, Measurements_Map, SI);
 
+  /*ACOUSTIC Modificiations by R.O Icke*/
+
+  /*!\brief TIMEDOMAIN3D \n DESCRIPTION: use 3D Time domain FWH formulation \n Options: NO, YES \ingroup Config */
+  addBoolOption("TIMEDOMAIN3D", TimeDomain3D, false);
+
+  /*Location of iObserver Loop*/
+  addBoolOption("ACOUSTIC_INNER_OBSLOOP", Acoustic_Inner_ObsLoop, true);
+  /*Obtain Acoustic signal by using periodicity function*/
+  addBoolOption("ACOUSTIC_PERIODICITY", Acoustic_Periodicity, false);
+  /*Motion definition for computing velocity in acoustic signal computation. Prescibed or Time Dependent. True=Prescibed, False=Time Dep.*/
+  addBoolOption("ACOUSTIC_PRESCRIBED_MOTION", Acoustic_Prescribed_Motion, false);
+  /*Complex (CD) or Algorithmic (AD) differentiation. True=CD, False=AD*/
+  addBoolOption("ACOUSTIC_CD", Acoustic_CD, false);
+  /*Step value for complex diff, h */
+  addDoubleOption("ACOUSTIC_CD_STEP_VAL", Acoustic_CD_step_val, 1e-16);
+  /*if CD, id of dependent for partial diff.
+   *00=dX, 1=dY, 2=dZ, 3=dRho, 4=dRhoUx, 5=dRhouUy, 6=dRhouUz, 7=dRhouE 8=dTKE) */
+  addUnsignedLongOption("ACOUSTIC_CD_DEPENDENT", Acoustic_CD_Dependent, 0);
+  /*if CD, iSample and iPanel*/
+  addUnsignedLongOption("ACOUSTIC_CD_ISAMPLE", Acoustic_CD_iSample, 10);
+  addUnsignedLongOption("ACOUSTIC_CD_IPANEL", Acoustic_CD_iPanel, 10);
+
   /*!\par CONFIG_CATEGORY: FluidModel \ingroup Config*/
   /*!\brief FLUID_MODEL \n DESCRIPTION: Fluid model \n OPTIONS: See \link FluidModel_Map \endlink \n DEFAULT: STANDARD_AIR \ingroup Config*/
   addEnumOption("FLUID_MODEL", Kind_FluidModel, FluidModel_Map, STANDARD_AIR);

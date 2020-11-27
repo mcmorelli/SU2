@@ -668,6 +668,19 @@ private:
   Wrt_Binary_Restart,           /*!< \brief Write binary SU2 native restart files.*/
   Read_Binary_Restart,          /*!< \brief Read binary SU2 native restart files.*/
   Restart_Flow;                 /*!< \brief Restart flow solution for adjoint and linearized problems. */
+
+  //ACOUSTIC OPTIONS MCM
+  bool TimeDomain3D;	/*!< \brief Use 3D time-domain FWH formulation.*/
+
+  bool Acoustic_Inner_ObsLoop;
+  bool Acoustic_Periodicity;
+  bool Acoustic_Prescribed_Motion;
+  bool Acoustic_CD;
+  su2double Acoustic_CD_step_val;
+  unsigned long Acoustic_CD_Dependent;
+  unsigned long Acoustic_CD_iSample;
+  unsigned long Acoustic_CD_iPanel;
+
   unsigned short nMarker_Monitoring,  /*!< \brief Number of markers to monitor. */
   nMarker_Designing,                  /*!< \brief Number of markers for the objective function. */
   nMarker_GeoEval,                    /*!< \brief Number of markers for the objective function. */
@@ -5221,6 +5234,23 @@ public:
    * \return Restart information, if <code>TRUE</code> then the code will use the solution as restart.
    */
   bool GetRestart(void) const { return Restart; }
+
+  // ACOUSTIC OPTIONS MCM
+  /*!
+   * \brief Provides information on which FWH formulation to sue.
+   * \return TimeDomain3D information, if <code>TRUE</code> then the code will use the 3D Time domain formulation. Otherwise the frequency domain formulation is used
+   */
+  bool GetTimeDomain3D(void) const { return TimeDomain3D; }
+
+
+  /* It indicates location of observer loop it returns inner side or outer side*/
+  bool GetAcoustic_Inner_ObsLoop(void) const { return Acoustic_Inner_ObsLoop; }
+
+
+  /* It get information about motion type for acoustic computation
+   * 	it can be Prescribed Motion (TRUE) or Time Dependent Motion (FALSA) */
+  bool GetAcoustic_Prescribed_Motion(void) const { return Acoustic_Prescribed_Motion; }
+
 
   /*!
    * \brief Flag for whether binary SU2 native restart files are written.

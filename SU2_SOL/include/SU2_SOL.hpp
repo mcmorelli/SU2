@@ -37,6 +37,7 @@
 #include "../../Common/include/geometry/CPhysicalGeometry.hpp"
 #include "../../Common/include/CConfig.hpp"
 
+#include "../../SU2_CFD/include/postprocessing_structure.hpp"
 
 void WriteFiles(CConfig *config, CGeometry* geometry, CSolver** solver_container, COutput* output, unsigned long TimeIter);
 

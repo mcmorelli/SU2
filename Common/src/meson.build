@@ -5,7 +5,8 @@ common_src =files(['graph_coloring_structure.cpp',
            'basic_types/ad_structure.cpp',
            'wall_model.cpp',
            'mpi_structure.cpp',
-           'CMultiGridQueue.cpp'])
+           'CMultiGridQueue.cpp',
+           'math_op_structure.cpp'])
 
 subdir('linear_algebra')
 subdir('toolboxes')

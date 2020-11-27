@@ -28,6 +28,8 @@
 
 #include "../include/SU2_SOL.hpp"
 
+//#include "../../SU2_CFD/include/postprocessing_structure.hpp"
+
 using namespace std;
 
 int main(int argc, char *argv[]) {
@@ -36,6 +38,12 @@ int main(int argc, char *argv[]) {
   su2double StartTime = 0.0, StopTime = 0.0, UsedTime = 0.0;
 
   char config_file_name[MAX_STRING_SIZE];
+
+  su2double Objective_Function;
+  su2double *Objective_Function2;
+
+  ofstream CFD_pressure_file ;
+  CFD_pressure_file.open("p_CFD.dat");
 
   /*--- MPI initialization ---*/
 
@@ -57,6 +65,9 @@ int main(int argc, char *argv[]) {
   CConfig **config_container      = nullptr;
   CConfig *driver_config          = nullptr;
   unsigned short *nInst           = nullptr;
+
+  FWHSolver **FWH_container       = nullptr;
+  //SNG **SNG_container             = nullptr;
 
   /*--- Load in the number of zones and spatial dimensions in the mesh file (if no config
    file is specified, default.cfg is used) ---*/
@@ -219,6 +230,25 @@ int main(int argc, char *argv[]) {
     }
 
   }
+
+
+  //bool CAA_FWH = 0;
+  // bool CAA_SNG = 1;
+
+  if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE){
+      FWH_container = new FWHSolver* [nZone];
+      for (iZone = 0; iZone < nZone; iZone++) {
+          FWH_container[iZone]  = new FWHSolver(config_container[iZone],geometry_container[iZone][INST_0]);
+      }
+  }
+
+  /*if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE_SNG){
+     SNG_container = new SNG* [nZone];
+     for (iZone = 0; iZone < nZone; iZone++) {
+         SNG_container[iZone]  = new SNG(config_container[iZone],geometry_container[iZone]);
+     }
+  }*/
+
 
   const bool fsi = config_container[ZONE_0]->GetFSI_Simulation();
   const bool fem_solver = config_container[ZONE_0]->GetFEMSolver();
@@ -714,6 +744,134 @@ int main(int argc, char *argv[]) {
 
   }
 
+
+
+  if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE){   //For now, completely by-pass the FWH branch; Put in a config option in the future!
+
+      if (rank == MASTER_NODE) cout<<"Type= "<<   config_container[ZONE_0]->GetDiscrete_Adjoint() <<endl;  //  <--- returns 1! (cont adj)
+
+      if (config_container[ZONE_0]->GetAD_Mode()){
+          if (rank == MASTER_NODE)
+              cout << endl <<"------------------------- Computing Far Field Noise (Primal+Adjoint) -----------------------" << endl;
+          AD::StartRecording();
+          FWH_container[ZONE_0]->SetAeroacoustic_Analysis(solver_container[ZONE_0][INST_0],config_container[ZONE_0],geometry_container[ZONE_0][INST_0],CFD_pressure_file);
+          if (rank == MASTER_NODE) cout<<"Primal Part Finished"<<endl;
+
+          //When Objective_function is p_rms, sensitivity computation
+          Objective_Function = FWH_container[ZONE_0]-> SPL;
+          AD::StopRecording();
+          if (rank==MASTER_NODE){
+              SU2_TYPE::SetDerivative(Objective_Function,1.0);
+          }else{
+              SU2_TYPE::SetDerivative(Objective_Function,0.0);
+          }
+          if (rank == MASTER_NODE) cout<<"Computing FWH Adjoint..."<<endl;
+          AD::ComputeAdjoint();
+          if (rank == MASTER_NODE) cout<<"Finished Computing FWH Adjoint"<<endl;
+
+          su2double extracted_derivative;
+          for (int iSample=0; iSample<FWH_container[ZONE_0]->nSample2; iSample++){
+              for (int iPanel=0; iPanel<FWH_container[ZONE_0]->nPanel; iPanel++){
+                  for (int i =0; i< FWH_container[ZONE_0]->nDim+6; i++){
+                      if ( i < FWH_container[ZONE_0]->nDim ){
+                          FWH_container[ZONE_0]-> dJdX[i][iPanel][iSample]=SU2_TYPE::GetDerivative(extracted_derivative);
+                      }else{
+                          FWH_container[ZONE_0]-> dJdU[i-FWH_container[ZONE_0]->nDim][iPanel][iSample]=SU2_TYPE::GetDerivative(extracted_derivative);
+                      }
+                  }
+              }
+          }
+
+
+          if (rank == MASTER_NODE) cout<<"Finished Extracting"<<endl;
+
+          FWH_container[ZONE_0]->Write_Sensitivities(solver_container[ZONE_0][INST_0],config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
+
+
+
+      }else{
+          if (rank == MASTER_NODE)
+              cout << endl <<"------------------------- Computing Far Field Noise (Primal Only) -----------------------" << endl;
+          FWH_container[ZONE_0]-> nZone=nZone;
+          for (iZone = 0; iZone < nZone; iZone++) {
+              if (rank == MASTER_NODE) cout<<"iZone: "<<iZone<<" and nZone: "<<nZone<<endl;
+              FWH_container[iZone]-> iZone=iZone;
+              FWH_container[iZone]-> nZone=nZone;
+              FWH_container[iZone]-> Initialize(config_container[iZone],geometry_container[iZone][INST_0]);
+              FWH_container[iZone]-> Connectivity(config_container[iZone],geometry_container[iZone][INST_0]);
+              if (iZone==0){
+                  FWH_container[iZone]-> ComputeMinMaxInc_Time(config_container[iZone],geometry_container[iZone][INST_0]);
+              }else{
+                  for(int iObserver = 0; iObserver<FWH_container[ZONE_0]->nObserver ; iObserver++){
+                      FWH_container[iZone]->StartTime[iObserver]= FWH_container[ZONE_0]->StartTime[iObserver];
+                      FWH_container[iZone]->EndTime[iObserver]= FWH_container[ZONE_0]->EndTime[iObserver];
+                      FWH_container[iZone]->dt[iObserver]= FWH_container[ZONE_0]->dt[iObserver];
+                  }
+              }
+              FWH_container[iZone]-> F1A_SourceTimeDominant(config_container[iZone],geometry_container[iZone][INST_0]);
+          }
+          if (nZone>1){
+              if (rank == MASTER_NODE){
+                  iZone=0;
+                  FWH_container[iZone]-> nZone=nZone;
+                  cout<< endl<<"-------- Combining zones-----------"<<endl;
+                  FWH_container[iZone]-> CombineZones (config_container[iZone]);
+                  cout<< endl<<"Combined acoustic datan can be found in 'pp_FWH_(ObserverID)_Combined'. "<<endl;
+              }
+          }
+
+          //FWH_container[ZONE_0]->SetAeroacoustic_Analysis(solver_container[ZONE_0],config_container[ZONE_0],geometry_container[ZONE_0],CFD_pressure_file);
+      }
+
+  }
+
+  /*if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE_SNG){
+
+
+      if (config_container[ZONE_0]->GetAD_Mode()){
+      if (rank == MASTER_NODE)
+        cout << endl <<"------------------------- Computing Broadband Noise Source using SNG (Primal+Adjoint) -----------------------" << endl;
+                   AD::StartRecording();
+       SNG_container[ZONE_0]->Perform_SNG_Analysis();
+       Objective_Function = SNG_container[ZONE_0]->J_BBN;
+        if (rank == MASTER_NODE) cout<<"Primal Part Finished"<<endl;
+        if (rank==MASTER_NODE){
+            cout<<"Setting JBar. Obj= "<< std::setprecision(15) <<Objective_Function<<endl;
+        SU2_TYPE::SetDerivative(Objective_Function,1.0);
+          }else{
+            SU2_TYPE::SetDerivative(Objective_Function,0.0);
+          }
+        AD::StopRecording();
+        AD::ComputeAdjoint();
+
+        if (rank == MASTER_NODE) cout<<"Finished Computing SNG Adjoint"<<endl;
+
+
+        su2double extracted_derivative;
+
+
+        for (int iSNGPT=0; iSNGPT<SNG_container[ZONE_0]->nSNGPts; iSNGPT++){
+             for (int iVar =0; iVar< SNG_container[ZONE_0]->nDim+2; iVar++){
+            SNG_container[ZONE_0]-> dJBBN_dU[iVar][iSNGPT]=SU2_TYPE::GetDerivative(extracted_derivative);
+     //   if ( SNG_container[ZONE_0]->PointID[iSNGPT]==1158)      cout<<"dJdU= "<<SNG_container[ZONE_0]-> dJBBN_dU[iVar][iSNGPT]<<", iVar= "<<iVar<<", iSNGPT= "<<iSNGPT<<", x= "<<SNG_container[ZONE_0]->SNG_Coords[iSNGPT][0]<<", TKE= "<<SNG_container[ZONE_0]->TKE[iSNGPT]<<endl;
+               }
+        }
+
+
+
+       if (rank == MASTER_NODE) cout<<"Finished Extracting"<<endl;
+
+       SNG_container[ZONE_0]-> Write_SNGSensitivities();
+
+     }else{
+          if (rank == MASTER_NODE)
+            cout << endl <<"------------------------- Computing Broadband Noise Source using SNG (Primal Only) -----------------------" << endl;
+           SNG_container[ZONE_0]->Perform_SNG_Analysis();
+     }
+
+  }*/
+
+
   delete config;
   config = nullptr;
 
@@ -767,6 +925,28 @@ int main(int argc, char *argv[]) {
     delete [] output;
   }
   if (rank == MASTER_NODE) cout << "Deleted COutput class." << endl;
+
+/*
+  if (FWH_container != nullptr) {
+      for (iZone = 0; iZone < nZone; iZone++) {
+          if (FWH_container[iZone] != nullptr) {
+              delete FWH_container[iZone];
+          }
+      }
+      delete [] FWH_container;
+  }
+  if (rank == MASTER_NODE) cout << "Deleted FWH_container container." << endl;
+
+  if (SNG_container != nullptr) {
+      for (iZone = 0; iZone < nZone; iZone++) {
+          if (SNG_container[iZone] != nullptr) {
+              delete SNG_container[iZone];
+          }
+      }
+      delete [] SNG_container;
+  }
+  if (rank == MASTER_NODE) cout << "Deleted SNG_container container." << endl;
+*/
 
   /*--- Synchronization point after a single solver iteration. Compute the
    wall clock time required. ---*/
