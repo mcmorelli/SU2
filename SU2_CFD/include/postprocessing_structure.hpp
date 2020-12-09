@@ -72,6 +72,9 @@
 #include "../include/linear_algebra/CSysSolve.hpp"
 #include "../include/solvers/CSolver.hpp"
 
+//#include "../../Common/include/math_op_structure.hpp"
+//#include "../../Common/include/toolboxes/printing_toolbox.hpp"
+
 using namespace std;
 
 
@@ -200,6 +203,65 @@ class SNG {
     void Compute_BBN_ObjFunc();
     void Write_BroadBandNoiseSource();
     void Write_SNGSensitivities();
+
+};
+
+class F1A {
+public:
+    unsigned short nDim;
+    unsigned short iZone, nZone;
+
+    unsigned long nObserver, nPanel, nSample, SamplingFreq, nqSample;
+    unsigned long nSurfaceNodes;
+
+    unsigned long *PointID;
+    unsigned long *globalIndexContainer;
+
+    su2double FreeStreamPressure;
+    su2double FreeStreamDensity;
+    su2double U1, U2, U3, a_inf;
+    su2double pp_t;
+    su2double T1, T2, T3, T4, T5;
+    su2double SPL;
+
+    su2double *surface_geo;
+    su2double *GridVel;
+    su2double *Momentum;
+    su2double *Normal;
+    su2double *UnitaryNormal;
+    su2double *Area;
+    su2double *Q;
+    su2double *F;
+    su2double *RHO;
+    su2double *StartTime;
+    su2double *EndTime;
+    su2double *dt;
+    su2double *RadVec;
+    su2double *Observer_Locations;
+    su2double *pp_out;
+
+    complex <su2double>  *pp_fft;
+
+    F1A(CConfig *config, CGeometry *geometry);
+    ~F1A(void);
+
+    //new implementation
+    void Initialize( CConfig *config, CGeometry *geometry);
+    static void UpdateDualGrid(CGeometry *geometry, CConfig *config);
+    void ComputeNormal( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver);
+    void SetSurfaceGeom(CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver);
+    void Read_TECPLOT_ASCII( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample );
+
+    //legacy implementation
+    void ComputeMinMaxInc_Time( CConfig *config, CGeometry *geometry );
+    void ComputeObserverTime( CConfig *config, unsigned long iObserver, unsigned long iPanel,unsigned long iSample, unsigned long iLocSample, unsigned long i);
+    void F1A_SourceTimeDominant ( CConfig* config, CGeometry *geometry);
+    void F1A_Formulation ( CConfig *config,unsigned long iObserver, unsigned long iPanel,  unsigned long iSample, unsigned long iLocSample, unsigned long i);
+    void ComputeVelocities ( CConfig *config,  unsigned long iSample, unsigned long iLocSample);
+    void FFT_AcousticPressureSignal(su2double pp_mean, su2double *pp_TimeDomain, unsigned long res_factor);
+
+private:
+    int rank, size;
 
 };
 

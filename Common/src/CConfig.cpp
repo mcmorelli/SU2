@@ -1148,6 +1148,7 @@ void CConfig::SetConfig_Options() {
   /*if CD, iSample and iPanel*/
   addUnsignedLongOption("ACOUSTIC_CD_ISAMPLE", Acoustic_CD_iSample, 10);
   addUnsignedLongOption("ACOUSTIC_CD_IPANEL", Acoustic_CD_iPanel, 10);
+  addUnsignedLongOption("ACOUSTIC_NQ_SAMPLES", Acoustic_nqSamples, 20);
 
   /*!\par CONFIG_CATEGORY: FluidModel \ingroup Config*/
   /*!\brief FLUID_MODEL \n DESCRIPTION: Fluid model \n OPTIONS: See \link FluidModel_Map \endlink \n DEFAULT: STANDARD_AIR \ingroup Config*/

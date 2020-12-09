@@ -66,8 +66,9 @@ int main(int argc, char *argv[]) {
   CConfig *driver_config          = nullptr;
   unsigned short *nInst           = nullptr;
 
-  FWHSolver **FWH_container       = nullptr;
+  //FWHSolver **FWH_container       = nullptr;
   //SNG **SNG_container             = nullptr;
+  F1A **F1A_container             = nullptr;
 
   /*--- Load in the number of zones and spatial dimensions in the mesh file (if no config
    file is specified, default.cfg is used) ---*/
@@ -196,10 +197,43 @@ int main(int argc, char *argv[]) {
 
       geometry_container[iZone][iInst]->SetBoundaries(config_container[iZone]);
 
+
+
+        /*--- recompute elements surrounding points, points surrounding points ---*/
+
+        if (rank == MASTER_NODE) cout << "Recomputing point connectivity." << endl;
+        geometry_container[iZone][iInst]->SetPoint_Connectivity();
+
+        /*--- Compute elements surrounding elements ---*/
+
+        if (rank == MASTER_NODE) cout << "Setting element connectivity." << endl;
+        geometry_container[iZone][iInst]->SetElement_Connectivity();
+
+        /*--- Create the edge structure ---*/
+
+        if (rank == MASTER_NODE) cout << "Identifying edges and vertices." << endl;
+        geometry_container[iZone][iInst]->SetEdges();
+        geometry_container[iZone][iInst]->SetVertex(config_container[iZone]);
+
+        /*--- Compute cell center of gravity ---*/
+
+        if ((rank == MASTER_NODE)) cout << "Computing centers of gravity." << endl;
+        SU2_OMP_PARALLEL {
+            geometry_container[iZone][iInst]->SetCoord_CG();
+        }
+
+        /*--- Create the control volume structures ---*/
+
+        if ((rank == MASTER_NODE)) cout << "Setting the control volume structure." << endl;
+        geometry_container[iZone][iInst]->SetControlVolume(config_container[iZone], ALLOCATE);
+        geometry_container[iZone][iInst]->SetBoundControlVolume(config_container[iZone], ALLOCATE);
+
+
+
       /*--- Create the vertex structure (required for MPI) ---*/
 
-      if (rank == MASTER_NODE) cout << "Identify vertices." <<endl;
-      geometry_container[iZone][iInst]->SetVertex(config_container[iZone]);
+//      if (rank == MASTER_NODE) cout << "Identify vertices." <<endl;
+//      geometry_container[iZone][iInst]->SetVertex(config_container[iZone]);
 
       /*--- Store the global to local mapping after preprocessing. ---*/
 
@@ -234,20 +268,28 @@ int main(int argc, char *argv[]) {
 
   //bool CAA_FWH = 0;
   // bool CAA_SNG = 1;
-
+/*
   if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE){
       FWH_container = new FWHSolver* [nZone];
       for (iZone = 0; iZone < nZone; iZone++) {
           FWH_container[iZone]  = new FWHSolver(config_container[iZone],geometry_container[iZone][INST_0]);
       }
   }
-
+*/
   /*if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE_SNG){
      SNG_container = new SNG* [nZone];
      for (iZone = 0; iZone < nZone; iZone++) {
          SNG_container[iZone]  = new SNG(config_container[iZone],geometry_container[iZone]);
      }
   }*/
+
+
+    if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE){
+        F1A_container = new F1A* [nZone] ();
+        for (iZone = 0; iZone < nZone; iZone++) {
+            F1A_container[iZone]  = new F1A(config_container[iZone],geometry_container[iZone][INST_0]);
+        }
+    }
 
 
   const bool fsi = config_container[ZONE_0]->GetFSI_Simulation();
@@ -745,8 +787,16 @@ int main(int argc, char *argv[]) {
   }
 
 
+  F1A_container[ZONE_0]-> iZone = 0;
+  F1A_container[ZONE_0]-> nZone = nZone;
 
-  if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE){   //For now, completely by-pass the FWH branch; Put in a config option in the future!
+  F1A_container[ZONE_0]-> Initialize(config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
+  F1A_container[ZONE_0]-> ComputeMinMaxInc_Time(config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
+  F1A_container[ZONE_0]-> F1A_SourceTimeDominant(config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
+
+
+/*
+    if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE){   //For now, completely by-pass the FWH branch; Put in a config option in the future!
 
       if (rank == MASTER_NODE) cout<<"Type= "<<   config_container[ZONE_0]->GetDiscrete_Adjoint() <<endl;  //  <--- returns 1! (cont adj)
 
@@ -824,6 +874,8 @@ int main(int argc, char *argv[]) {
       }
 
   }
+*/ //end of commented section
+
 
   /*if (config_container[ZONE_0]->GetKind_ObjFunc() == NOISE_SNG){
 
@@ -925,6 +977,18 @@ int main(int argc, char *argv[]) {
     delete [] output;
   }
   if (rank == MASTER_NODE) cout << "Deleted COutput class." << endl;
+
+
+  if (F1A_container != nullptr) {
+      for (iZone = 0; iZone < nZone; iZone++) {
+          if (F1A_container[iZone] != nullptr) {
+              delete F1A_container[iZone];
+          }
+      }
+      delete [] F1A_container;
+  }
+  if (rank == MASTER_NODE) cout << "Deleted F1A class." << endl;
+
 
 /*
   if (FWH_container != nullptr) {

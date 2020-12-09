@@ -32,7 +32,7 @@
  */
 
 #include "../include/postprocessing_structure.hpp"
-#include "../../Common/include/math_op_structure.hpp"
+
 #include <fstream>
 #include <iostream>
 //#include "../include/gsl_sf_bessel.h"
@@ -47,6 +47,11 @@
 #include <string.h>
 typedef std::complex<su2double> Complex;
 typedef std::valarray<Complex> CArray;
+
+//#include <vector>
+#include "../../Common/include/math_op_structure.hpp"
+#include "../../Common/include/toolboxes/printing_toolbox.hpp"
+using namespace PrintingToolbox;
 
 FWHSolver::FWHSolver(CConfig *config,CGeometry *geometry) {
 
@@ -2086,13 +2091,1042 @@ void FWHSolver::CombineZones( CConfig *config){
  delete [] Term4;
 
 
-}//end of the subroutine: CombineZones
+}
+//end of the subroutine: CombineZones
 
 
 
+/*--- new implementation for reading ASCII surface tecplot files in v7: remains a work in progress ---*/
+
+F1A::F1A(CConfig *config, CGeometry *geometry) {
+
+    nDim                    = 0;
+    nSurfaceNodes           = 0;
+    nqSample                = 0;
+    SPL                     = 0.0;
+
+    Observer_Locations      = nullptr;
+    globalIndexContainer    = nullptr;
+    Normal                  = nullptr;
+    UnitaryNormal           = nullptr;
+    Area                    = nullptr;
+    surface_geo             = nullptr;
+    GridVel                 = nullptr;
+    Momentum                = nullptr;
+    Q                       = nullptr;
+    F                       = nullptr;
+    RHO                     = nullptr;
+    RadVec                  = nullptr;
+    StartTime               = nullptr;
+    EndTime                 = nullptr;
+    dt                      = nullptr;
+    pp_out                  = nullptr;
+    pp_fft                  = nullptr;
+
+    /*--- Store MPI rank and size ---*/
+
+    rank = SU2_MPI::GetRank();
+    size = SU2_MPI::GetSize();
+
+}
+
+F1A::~F1A(void) {
+
+  delete [] Observer_Locations;
+  delete [] Normal;
+  delete [] UnitaryNormal;
+  delete [] Area;
+  delete [] globalIndexContainer;
+  delete [] surface_geo;
+  delete [] GridVel;
+  delete [] Momentum;
+  delete [] Q;
+  delete [] F;
+  delete [] RHO;
+  delete [] RadVec;
+  delete [] StartTime;
+  delete [] EndTime;
+  delete [] dt;
+  delete [] pp_out;
+  delete [] pp_fft;
+
+}
+
+void F1A::Initialize(CConfig *config, CGeometry *geometry) {
+
+    unsigned long iVertex, iPoint, iMarker, Global_Index;
+    unsigned long index = 0;
+
+    nDim                = geometry->GetnDim();
+    nqSample            = config->GetAcoustic_nqSamples();
+    SamplingFreq        = config->GetWrt_Sol_Freq_DualTime();
+    nSample             = config->GetIter_Avg_Objective()/SamplingFreq;
+
+    /*--- Get the number of surface nodes ---*/
+    for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+        /* --- Loop over boundary markers to select those on the FWH surface --- */
+        if (config->GetMarker_All_KindBC(iMarker) == HEAT_FLUX) {
+            /*--- Get the total number of FWH surface nodes ---*/
+            nSurfaceNodes += geometry->nVertex[iMarker];
+        }
+    }
+
+    globalIndexContainer = new unsigned long[nSurfaceNodes];
+
+    /*--- Build an array containing the global indices for the surface nodes ---*/
+    for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+        /* --- Loop over boundary markers to select those on the FWH surface --- */
+        if (config->GetMarker_All_KindBC(iMarker) == HEAT_FLUX) {
+
+            /*--- Loop over all the vertices on this boundary marker ---*/
+            for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+
+                iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+
+                /*--- Check if the node belongs to the domain (i.e., not a halo node) ---*/
+                if (geometry->nodes->GetDomain(iPoint)) {
+
+                    Global_Index = geometry->nodes->GetGlobalIndex(iPoint);
+                    globalIndexContainer[index] = Global_Index;
+                    index++;
+
+                }
+            }
+        }
+    }
+
+    /*--- Sort the global index container in ascending order ---*/
+    unsigned long tmp = 0;
+    for (unsigned long i = 0; i < nSurfaceNodes; i++) {
+        for (unsigned long j = i + 1; j < nSurfaceNodes; j++)
+        {
+            if (globalIndexContainer[j] < globalIndexContainer[i])
+            {
+                tmp = globalIndexContainer[i];
+                globalIndexContainer[i] = globalIndexContainer[j];
+                globalIndexContainer[j] = tmp;
+            }
+        }
+    }
+
+    nPanel      = nSurfaceNodes;
+    surface_geo = new su2double [nSurfaceNodes*nqSample*nDim];
+    GridVel     = new su2double [nSurfaceNodes*nqSample*nDim];
+    Momentum    = new su2double [nSurfaceNodes*nqSample*nDim];
+    Q           = new su2double [nSurfaceNodes*nqSample*nDim];
+    F           = new su2double [nSurfaceNodes*nqSample];
+    RHO         = new su2double [nSurfaceNodes*nqSample];
+
+    Normal          = new su2double[nqSample*nSurfaceNodes*nDim];
+    UnitaryNormal   = new su2double[nqSample*nSurfaceNodes*nDim];
+    Area            = new su2double[nqSample*nSurfaceNodes];
+
+    RadVec      = new su2double [15];
+    for (int i=0; i<15; i++) {
+        RadVec[i]=0.0;
+    }
+
+    //add this as a config option later
+    string  text_line;
+    ifstream Observer_LocationFile;
+    string filename = "Observer_Locations.dat";
+    Observer_LocationFile.open(filename.data() , ios::in);
+    if (Observer_LocationFile.fail()) {
+        cout << "There is no file!!! " <<  filename.data()  << "."<< endl;
+        exit(EXIT_FAILURE);
+    }
+    getline (Observer_LocationFile, text_line);
+    istringstream point_line(text_line);
+    point_line >> nObserver ;
+    Observer_Locations = new su2double [nObserver*nDim];
+
+    unsigned long iObserver=0;
+    while (getline (Observer_LocationFile, text_line)) {
+        istringstream point_line2(text_line);
+        if (nDim==2){
+            point_line2 >> Observer_Locations[iObserver + 0]>> Observer_Locations[iObserver + 1];
+        }
+        if (nDim==3){
+            point_line2 >> Observer_Locations[iObserver + 0]>> Observer_Locations[iObserver + 1]>> Observer_Locations[iObserver + 2];
+        }
+        iObserver++;
+    }
+
+    StartTime   = new su2double [nObserver];
+    EndTime     = new su2double [nObserver];
+    dt          = new su2double [nObserver];
+
+    for(iObserver = 0; iObserver<nObserver ; iObserver++){
+        StartTime[iObserver]= 0.0;
+        EndTime[iObserver]= 9999999999.0;
+        dt[iObserver]= 0.0;
+    }
+
+    su2double R = 287.058;
+    FreeStreamPressure  =   config->GetPressure_FreeStream();
+    FreeStreamDensity   =   FreeStreamPressure/R/config->GetTemperature_FreeStream();;
+
+    su2double M     = config->GetMach();
+    su2double AOA   = config->GetAoA();
+    su2double pi    = 3.141592653589793;
+
+    a_inf   = sqrt(config->GetGamma()*FreeStreamPressure / FreeStreamDensity);
+    U1      = M*a_inf*cos(AOA*pi/180) ;
+    U2      = M*a_inf*sin(AOA*pi/180) ;
+    U3      = 0.0;    //FIX THIS LATER!!!
+
+    pp_fft  = new complex <su2double> [nSample];
+    for (unsigned long iSample=0; iSample < nSample; iSample++){
+        pp_fft[iSample]= 0.0;
+    }
+
+    pp_out = new su2double [nPanel];
+    for (unsigned long iPanel=0; iPanel<nPanel; iPanel++){
+        pp_out[iPanel]=0.0;
+    }
+
+}
+
+void F1A::Read_TECPLOT_ASCII( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample){
+
+#ifdef HAVE_MPI
+    int rank, nProcessor;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nProcessor);
+#endif
+
+    ifstream surface_file;
+    string text_line, useless, Tag;
+    string filename = "surface_flow";
+    string ext = ".dat";
+
+    int iVar;
+    int nFields;
+    int x_index = 0, y_index = 1, z_index = 2;
+    int density_index = 3;
+    int momentum_x_index = 4, momentum_y_index = 5, momentum_z_index = 6;
+    int grid_vel_x_index = 9, grid_vel_y_index = 10, grid_vel_z_index = 11;
+    int pressure_index = 12;
+
+    vector<string> fields;
+    fields.clear();
+
+    passivedouble *Aux_DataStruct = nullptr;
+
+    unsigned long ExtIter = (iSample+iLocSample)*SamplingFreq + config->GetRestart_Iter();
+
+    filename = config->GetFilename(filename, ext, ExtIter);
+
+    /*--- Open the restart file ---*/
+
+    surface_file.open(filename.data(), ios::in);
+
+    /*--- In case there is no restart file ---*/
+
+    if (surface_file.fail()) {
+        cout << ("TECPLOT ASCII surface file ") + string(filename) + string(" not found.\n") ;
+        exit(EXIT_FAILURE);
+    }
+    else{
+        cout << "Reading Tecplot surface file " << filename << endl;
+    }
+
+    /*--- Identify the number of fields (and names) in the restart file ---*/
+
+    getline (surface_file, useless);
+    getline (surface_file, text_line);
+
+    char delimiter = ',';
+    fields = PrintingToolbox::split(text_line, delimiter);
+
+    //at index 0 trim tecplot field: VARIABLES =
+    fields[0].erase(0, 12);
+
+    for (auto & field : fields){
+        PrintingToolbox::trim(field);
+        field.erase(remove(field.begin(), field.end(), '"'), field.end());
+    }
+
+    for (int iField = 0; iField < fields.size(); iField++){
+        if (fields[iField] == "x") x_index = iField;
+        if (fields[iField] == "y") y_index = iField;
+        if (fields[iField] == "z") z_index = iField;
+        if (fields[iField] == "Density") density_index = iField;
+        if (fields[iField] == "Pressure") pressure_index = iField;
+        if (fields[iField] == "Grid_Velocity_x") grid_vel_x_index = iField;
+        if (fields[iField] == "Grid_Velocity_y") grid_vel_y_index = iField;
+        if (fields[iField] == "Grid_Velocity_z") grid_vel_z_index = iField;
+        if (fields[iField] == "Momentum_x") momentum_x_index = iField;
+        if (fields[iField] == "Momentum_y") momentum_y_index = iField;
+        if (fields[iField] == "Momentum_z") momentum_z_index = iField;
+    }
+
+    /*--- Set the number of variables, one per field in the restart file  ---*/
+
+    nFields = (int)fields.size();
+
+    /*--- Allocate memory for the restart data. ---*/
+
+    Aux_DataStruct = new passivedouble[nFields * nSurfaceNodes];
+
+    //skip line
+    getline (surface_file, useless);
+
+    /*--- Read all lines in the restart file and extract data. ---*/
+
+    for (int iNode = 0; iNode < nSurfaceNodes; iNode++ ) {
+
+        getline(surface_file, text_line);
+
+        delimiter = '\t';
+        vector<string> point_line = PrintingToolbox::split(text_line, delimiter);
+
+        for (iVar = 0; iVar < nFields; iVar++) {
+            Aux_DataStruct[iNode * nFields + iVar] = SU2_TYPE::GetValue(PrintingToolbox::stod(point_line[iVar]));
+        }
+    }
+
+    //assign the auxillary data to the F1A global variables
+    for (int iNode = 0; iNode < nSurfaceNodes; iNode++ ) {
+
+        surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + x_index];
+        surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + y_index];
+        surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + z_index];
+
+        if (config->GetAD_Mode()){
+            RHO[iLocSample * nSurfaceNodes + iNode] = Aux_DataStruct[iNode * nFields + density_index];
+        }
+
+        F[iLocSample * nSurfaceNodes + iNode] = Aux_DataStruct[iNode * nFields + pressure_index] - FreeStreamPressure;
+
+        GridVel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + grid_vel_x_index];
+        GridVel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + grid_vel_y_index];
+        GridVel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + grid_vel_z_index];
+
+        Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + momentum_x_index];
+        Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + momentum_y_index];
+        Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + momentum_z_index];
+
+    }
+
+    surface_file.close();
+
+    delete [] Aux_DataStruct;
+
+}
+
+void F1A::ComputeNormal( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver){
+
+    unsigned long iVertex, iPoint, iMarker;
+    unsigned short iDim;
+
+    su2double *normal = nullptr;
+    normal = new su2double[nDim];
+
+    for (iPoint = 0; iPoint < nSurfaceNodes; iPoint++) {
+
+        //allocate memory to the the heap to access across routines!
+        for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+            /* --- Loop over boundary markers to select those on the FWH surface --- */
+            if (config->GetMarker_All_KindBC(iMarker) == HEAT_FLUX) {
+
+                iVertex = geometry->nodes->GetVertex(globalIndexContainer[iPoint], iMarker);
+
+                /*--- Check the vertex is contained by the marker ---*/
+                if (iVertex != -1) {
+
+                    /*--- Normal vector for this vertex (negate for outward convention) ---*/
+                    geometry->vertex[iMarker][iVertex]->GetNormal(normal);
+
+                    for (iDim = 0; iDim < nDim; iDim++) {
+                        //Normal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim] = -normal[iDim];
+                        Normal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim] = normal[iDim];
+                    }
+
+                    Area[iLocSample * nSurfaceNodes + iPoint] = 0.0;
+                    for (iDim = 0; iDim < nDim; iDim++) {
+                        Area[iLocSample * nSurfaceNodes + iPoint] += pow(Normal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim],2);
+                    }
+
+                    Area[iLocSample * nSurfaceNodes + iPoint] = sqrt(Area[iLocSample * nSurfaceNodes + iPoint]);
+
+                    for (iDim = 0; iDim < nDim; iDim++) {
+                        UnitaryNormal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim] =
+                                Normal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim] / Area[iLocSample * nSurfaceNodes + iPoint];
+                    }
+
+                }
+            }
+        }
+    }
+
+    delete [] normal;
+}
+
+void F1A::SetSurfaceGeom(CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver) {
+
+    unsigned long  iPoint;
+    unsigned short iDim;
+
+    for (iPoint = 0; iPoint < nSurfaceNodes; iPoint++) {
+        su2double Coord[3];
+
+        for (iDim = 0; iDim < nDim; iDim++) {
+            Coord[iDim] = surface_geo[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim];
+        }
+
+        for (iDim = 0; iDim < nDim; iDim++) {
+            geometry->nodes->SetCoord(globalIndexContainer[iPoint], iDim, Coord[iDim]);
+        }
+    }
+
+    UpdateDualGrid(geometry, config);
+}
+
+void F1A::UpdateDualGrid(CGeometry *geometry, CConfig *config){
+
+    /*--- After moving all nodes, update the dual mesh. Recompute the edges and
+     dual mesh control volumes in the domain and on the boundaries. ---*/
+
+    geometry->SetCoord_CG();
+    geometry->SetControlVolume(config, UPDATE);
+    geometry->SetBoundControlVolume(config, UPDATE);
+    geometry->SetMaxLength(config);
+
+}
+
+void F1A::ComputeMinMaxInc_Time(CConfig *config, CGeometry *geometry) {
+
+    unsigned long iLocSample, iObserver, iPanel;
+
+#ifdef HAVE_MPI
+    int rank, nProcessor;
+                MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+                MPI_Comm_size(MPI_COMM_WORLD, &nProcessor);
+#endif
+
+    su2double tau;
+    iLocSample = 0;
+
+    //if (rank == MASTER_NODE) {
+        Read_TECPLOT_ASCII(config, geometry, 0, iLocSample);
+        Read_TECPLOT_ASCII(config, geometry, nSample - 1, iLocSample + 1);
+
+        SetSurfaceGeom(config, geometry, 0, iLocSample, 0);
+        ComputeNormal(config, geometry, 0, iLocSample, 0);
+    //}
+
+    for (iObserver=0; iObserver<nObserver; iObserver++){
+        for (iLocSample=0; iLocSample<2; iLocSample++){
+            for (iPanel=0; iPanel<nPanel; iPanel++){
+                ComputeObserverTime( config, iObserver, iPanel, iLocSample*(nSample-1), iLocSample,0);
+                tau= RadVec[4];
+                if (iLocSample==0){
+                    if (tau>StartTime[iObserver]){
+                        StartTime[iObserver]=tau;
+                    }
+                }else{
+                    if (tau<EndTime[iObserver]){
+                        EndTime[iObserver]=tau;
+                    }
+                }
+            }
+        }
+#ifdef HAVE_MPI
+        if (EndTime[iObserver]==0.0){
+                        	EndTime[iObserver]=999999999;
+                	}
+			SU2_MPI::Allreduce(&StartTime[iObserver],&StartTime[iObserver],1,MPI_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
+			SU2_MPI::Allreduce(&EndTime[iObserver],&EndTime[iObserver],1,MPI_DOUBLE,MPI_MIN,MPI_COMM_WORLD);
+#endif
+        dt[iObserver]=(EndTime[iObserver]-StartTime[iObserver])/nSample;
+        StartTime[iObserver]=StartTime[iObserver]+5*dt[iObserver];
+        EndTime[iObserver]=EndTime[iObserver]-5*dt[iObserver];
+        dt[iObserver]=(EndTime[iObserver]-StartTime[iObserver])/nSample;
+        if (rank==MASTER_NODE) cout<<"For Observer-"<<iObserver<<", Endtime="<<EndTime[iObserver]<<" and Startime="<<StartTime[iObserver]<<endl;
+        if (rank==MASTER_NODE) cout<<"dt="<<dt[iObserver]<<endl;
+    }
+}
+
+void F1A::ComputeObserverTime( CConfig *config, unsigned long iObserver, unsigned long iPanel,unsigned long iSample, unsigned long iLocSample, unsigned long i){
+
+/*This subroutine computes observer time and radiation vector for each panel */
+    unsigned long iDim;
+    su2double x,y,z;
+    su2double xp[3]= {0.0,0.0,0.0};
+    su2double xo[3]= {0.0,0.0,0.0};
+    su2double U[3] = {U1, U2, U3};
+    su2double dtt=0.1;
+    su2double eps=1.0;
+    su2double dtnew,diff,R,r1,r2,r3,r_mag,Time;
+
+    //unsigned long start_iter  =  config->GetUnst_RestartIter();
+    unsigned long start_iter = config->GetRestart_Iter();
+
+    Time= config->GetDelta_UnstTime()*(start_iter+(iSample+iLocSample)*SamplingFreq);
+    //x=surface_geo[iPanel][iLocSample][0];
+    x=surface_geo[iLocSample*nPanel*nDim + iPanel*nDim + 0 ];
+    //y=surface_geo[iPanel][iLocSample][1];
+    y=surface_geo[iLocSample*nPanel*nDim + iPanel*nDim + 1 ];
+    //z=surface_geo[iPanel][iLocSample][2];
+    z=surface_geo[iLocSample*nPanel*nDim + iPanel*nDim + 2 ];
+
+
+    x=x-U1*Time;
+    y=y-U2*Time;
+    z=z-U3*Time;
+
+    for (iDim=0; iDim<nDim; iDim++){
+        //xo[iDim]=Observer_Locations[iObserver][iDim]-U[iDim]*Time;
+        xo[iDim]=Observer_Locations[iObserver + iDim]-U[iDim]*Time;
+        xp[iDim]=xo[iDim]-U[iDim]*dtt;
+    }
+    while (eps>0.0000000001){
+        R=sqrt((xp[0]-x)*(xp[0]-x)+(xp[1]-y)*(xp[1]-y)+(xp[2]-z)*(xp[2]-z));
+        dtnew=R/a_inf;
+        diff=dtnew-dtt;
+        dtt=dtnew;
+        eps=diff/dtnew*10000;
+        eps=sqrt(eps*eps);
+        for (iDim=0; iDim<nDim; iDim++) xp[iDim]=xo[iDim]-U[iDim]*dtt;
+    }
+    r1 = xp[0]-x;
+    r2 = xp[1]-y;
+    r3 = xp[2]-z;
+    r_mag = sqrt(r1*r1+r2*r2+r3*r3);
+    r1 = r1/r_mag; r2 = r2/r_mag;r3 = r3/r_mag;
+
+    RadVec[5*i+0]=r1;
+    RadVec[5*i+1]=r2;
+    RadVec[5*i+2]=r3;
+    RadVec[5*i+3]=r_mag;
+    RadVec[5*i+4]=Time+dtt;//When the observer hears the signal
+
+}
+
+
+void F1A::F1A_SourceTimeDominant( CConfig *config, CGeometry *geometry){
+
+#ifdef HAVE_MPI
+    int rank, nProcessor;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &nProcessor);
+#endif
+    su2double PP[3]= {0.0,0.0,0.0};
+    su2double TT1[3]={0.0,0.0,0.0};
+    su2double TT2[3]={0.0,0.0,0.0};
+    su2double TT3[3]={0.0,0.0,0.0};
+    su2double TT4[3]={0.0,0.0,0.0};
+    su2double tau[3]= {0.0,0.0,0.0};
+    unsigned long iObserver, iSample, iSample2, iDim, iLocSample, iPanel,iqSample, Smallest_iLocSample;
+    su2double delta, dtt;
+    su2double pp_n, TT1_n,TT2_n,TT3_n,TT4_n;
+    su2double r1,r2,r3,R;
+    su2double pp_mean, SPL_iObserver;
+    char buffer[32];
+    unsigned long res_factor=1;
+    su2double dt_src,t;
+    unsigned long iObserver_inner, iObserver_outer;
+    unsigned long nObserver_inner, nObserver_outer;
+    unsigned long Pre_Mot=0;
+    dt_src=config->GetDelta_UnstTime()*SamplingFreq;
+    ofstream pp_FWH_file ;
+    ofstream pp_fft_file ;
+    if (ceil(log2(nSample))!=floor(log2(nSample))){
+        if (rank==MASTER_NODE){
+            cout<<"Number of samples are not power of 2 ---> no FFT computation "<<endl;
+        }
+    }
+    su2double dTT = config->GetDelta_UnstTime()*SamplingFreq; //Time Step to calculate sampling frequency
+    su2double Fs = 1/dTT; //Sampling frequency to be used in fft calculation
+
+    su2double **t_interp_inner= NULL,**pp_TimeDomain_inner = NULL,**pp_TimeDomainGlobal_inner = NULL;
+    su2double **T1_I=NULL,**T2_I=NULL,**T3_I=NULL,**T4_I=NULL;
+    su2double *t_interp_outer = NULL,*pp_TimeDomain_outer = NULL,*pp_TimeDomainGlobal_outer = NULL;
+    su2double *T1_O=NULL,*T2_O=NULL,*T3_O=NULL,*T4_O=NULL;
+
+
+    if(config->GetAcoustic_Inner_ObsLoop()){
+
+        delete[] t_interp_outer;
+        delete[] pp_TimeDomain_outer;
+        delete[] pp_TimeDomainGlobal_outer;
+        t_interp_inner= new su2double *[nObserver];
+        pp_TimeDomain_inner=new su2double *[nObserver];
+        if (rank==MASTER_NODE) pp_TimeDomainGlobal_inner=new su2double *[nObserver];
+        T1_I=new su2double *[nObserver];
+        T2_I=new su2double *[nObserver];
+        T3_I=new su2double *[nObserver];
+        T4_I=new su2double *[nObserver];
+        for (iObserver=0; iObserver<nObserver; iObserver++){
+            t_interp_inner[iObserver]=new su2double [nSample];
+            pp_TimeDomain_inner[iObserver]=new su2double [nSample];
+            if (rank==MASTER_NODE) pp_TimeDomainGlobal_inner[iObserver]=new su2double [nSample];
+            T1_I[iObserver]=new su2double [nSample];
+            T2_I[iObserver]=new su2double [nSample];
+            T3_I[iObserver]=new su2double [nSample];
+            T4_I[iObserver]=new su2double [nSample];
+            for (iSample=0; iSample<nSample; iSample++){
+                t_interp_inner[iObserver][iSample]=0.0;
+                pp_TimeDomain_inner[iObserver][iSample]=0.0;
+                if (rank==MASTER_NODE) pp_TimeDomainGlobal_inner[iObserver][iSample]=0.0;
+                T1_I[iObserver][iSample]=0.0;
+                T2_I[iObserver][iSample]=0.0;
+                T3_I[iObserver][iSample]=0.0;
+                T4_I[iObserver][iSample]=0.0;
+            }
+        }
+
+    }else{
+        delete[] t_interp_inner;
+        delete[] pp_TimeDomain_inner;
+        delete[] pp_TimeDomainGlobal_inner;
+        t_interp_outer= new su2double [nSample];
+        pp_TimeDomain_outer=new su2double [nSample];
+        if (rank==MASTER_NODE) pp_TimeDomainGlobal_outer=new su2double [nSample];
+        T1_O=new su2double [nSample];
+        T2_O=new su2double [nSample];
+        T3_O=new su2double [nSample];
+        T4_O=new su2double [nSample];
+    }
+
+    if(config->GetAcoustic_Inner_ObsLoop()){
+        for (iObserver=0; iObserver<nObserver; iObserver++){
+            t_interp_inner[iObserver][0]=StartTime[iObserver];
+        }
+    }
+
+    if(config->GetAcoustic_Inner_ObsLoop()){
+        nObserver_inner=nObserver;
+        nObserver_outer=1;
+    }else{
+        nObserver_outer=nObserver;
+        nObserver_inner=1;
+    }
+
+    for (iObserver_outer=0; iObserver_outer<nObserver_outer; iObserver_outer++){
+        if(!(config->GetAcoustic_Inner_ObsLoop())){
+            for (iSample=0; iSample<nSample; iSample++){
+                t_interp_outer[iSample]=0.0;
+                pp_TimeDomain_outer[iSample]=0.0;
+                if (rank==MASTER_NODE) pp_TimeDomainGlobal_outer[iSample]=0.0;
+                T1_O[iSample]=0.0;
+                T2_O[iSample]=0.0;
+                T3_O[iSample]=0.0;
+                T4_O[iSample]=0.0;
+            }
+            t_interp_outer[0]=StartTime[iObserver_outer];
+        }
+
+        iSample=0;
+        for (iLocSample=0; iLocSample<nqSample; iLocSample++){
+            for (iPanel=0; iPanel < nPanel; iPanel++){
+                for (iDim=0; iDim < nDim; iDim++){
+                    //n[iLocSample*nPanel*nDim + iPanel*nDim + iDim ]=0.0;
+                    UnitaryNormal[iLocSample*nPanel*nDim + iPanel*nDim + iDim ]=0.0;
+                }
+            }
+            if(config->GetAcoustic_Prescribed_Motion()) Pre_Mot=1;
+
+            //if (rank == MASTER_NODE) {
+            Read_TECPLOT_ASCII( config, geometry, iSample, iLocSample);
+
+            SetSurfaceGeom(config, geometry, iSample, iLocSample, iObserver_outer);
+            ComputeNormal(config, geometry, iSample, iLocSample, iObserver_outer);
+            //}
+
+        }
+        if(!(config->GetAcoustic_Prescribed_Motion())){
+            for (iLocSample=1; iLocSample<nqSample-1; iLocSample++){
+                ComputeVelocities(config, iSample, iLocSample);
+            }
+        }
+        iLocSample=nqSample/2;
+        iSample2=0;
+        for (iSample=0; iSample<nSample; iSample++){
+            if (rank==MASTER_NODE) cout<<"Computing the Acoustics at iSample-"<<iSample<<endl;
+            Smallest_iLocSample=999999;
+            for (iPanel=0; iPanel<nPanel; iPanel++){
+                for (iObserver_inner=0; iObserver_inner<nObserver_inner; iObserver_inner++){
+                    if(config->GetAcoustic_Inner_ObsLoop()){
+                        iObserver=iObserver_inner;
+                        t=t_interp_inner[iObserver][iSample];
+                    }else{
+                        iObserver=iObserver_outer;
+                        t=t_interp_outer[iSample];
+                    }
+                    for (int i=0; i<3 ; i++){
+                        //cout<<"Hey-15 iSample-"<<iSample<<" i: "<<i<<" iLocSample: "<<iLocSample<<endl;
+                        ComputeObserverTime(config, iObserver, iPanel, iSample2, iLocSample-1+i,i);
+                        tau[i] = RadVec[5*i+4];
+                    }
+                    //cout<<"Hey-17 iSample-"<<iSample<<" iPanel="<<iPanel<<" t_interp:"<<t<<" taus: "<<tau[0]<<" "<<tau[1]<<" "<<tau[2]<<" iLocSample-"<<iLocSample<<endl;
+                    while ( (t<tau[1]) || (t>tau[2]) ){
+                        if ( t<tau[1] ){
+                            if ( (iLocSample<3)  ) goto endloop;
+                            /*update tau and shift down*/
+                            iLocSample=iLocSample-1;
+                        }
+                        if ( t>tau[2] ){
+                            if ( (iLocSample>nqSample-4) ) goto endloop;
+                            iLocSample=iLocSample+1;
+                        }
+
+                        for (int i=0; i<3 ; i++){
+                            ComputeObserverTime(config, iObserver, iPanel, iSample2, iLocSample-1+i,i);
+                            tau[i] = RadVec[5*i+4];
+                        }
+                    }
+                    endloop:
+                    if (iLocSample<Smallest_iLocSample){
+                        Smallest_iLocSample=iLocSample;
+                    }
+                    if (iPanel==0){
+                        if (iSample<nSample-1){
+                            if(config->GetAcoustic_Inner_ObsLoop()){
+                                t_interp_inner[iObserver][iSample+1]=t_interp_inner[iObserver][iSample]+dt[iObserver];
+                            }else{
+                                t_interp_outer[iSample+1]=t_interp_outer[iSample]+dt[iObserver];
+                            }
+                        }
+                    }
+                    for (int i=0; i<3 ; i++){
+                        F1A_Formulation ( config,iObserver, iPanel, iSample,  iLocSample-1+i, i);
+                        PP[i]=pp_t;
+                        TT1[i]=T1;TT2[i]=T2;TT3[i]=T3;TT4[i]=T4+T5;
+                    }
+                    delta=t-tau[1];
+                    dtt=tau[2]-tau[1];
+                    /*2nd order taylor expansion for polynamial interpolation*/
+                    pp_n=PP[1]+delta*(PP[2]-PP[0])*0.5/dtt+delta*delta*0.5*(PP[2]-2*PP[1]+PP[0])/dtt/dtt;
+                    TT1_n=TT1[1]+delta*(TT1[2]-TT1[0])*0.5/dtt+delta*delta*0.5*(TT1[2]-2*TT1[1]+TT1[0])/dtt/dtt;
+                    TT2_n=TT2[1]+delta*(TT2[2]-TT2[0])*0.5/dtt+delta*delta*0.5*(TT2[2]-2*TT2[1]+TT2[0])/dtt/dtt;
+                    TT3_n=TT3[1]+delta*(TT3[2]-TT3[0])*0.5/dtt+delta*delta*0.5*(TT3[2]-2*TT3[1]+TT3[0])/dtt/dtt;
+                    TT4_n=TT4[1]+delta*(TT4[2]-TT4[0])*0.5/dtt+delta*delta*0.5*(TT4[2]-2*TT4[1]+TT4[0])/dtt/dtt;
+                    if(config->GetAcoustic_Inner_ObsLoop()){
+                        pp_TimeDomain_inner[iObserver][iSample] = pp_TimeDomain_inner[iObserver][iSample] + pp_n;
+                        T1_I[iObserver][iSample]=T1_I[iObserver][iSample]+TT1_n;
+                        T2_I[iObserver][iSample]=T2_I[iObserver][iSample]+TT2_n;
+                        T3_I[iObserver][iSample]=T3_I[iObserver][iSample]+TT3_n;
+                        T4_I[iObserver][iSample]=T4_I[iObserver][iSample]+TT4_n;
+                    }else{
+                        pp_TimeDomain_outer[iSample] = pp_TimeDomain_outer[iSample] + pp_n;
+                        T1_O[iSample]=T1_O[iSample]+TT1_n;
+                        T2_O[iSample]=T2_O[iSample]+TT2_n;
+                        T3_O[iSample]=T3_O[iSample]+TT3_n;
+                        T4_O[iSample]=T4_O[iSample]+TT4_n;
+                    }
+
+                    //if ((config->GetOutput_FileFormat() == PARAVIEW)) {
+                    pp_out[iPanel]=pp_n;
+                    R=RadVec[5*1+3]+delta*(RadVec[5*2+3]-RadVec[5*0+3])*0.5/dtt+delta*delta*0.5*(RadVec[5*2+3]-2*RadVec[5*1+3]+RadVec[5*0+3])/dtt/dtt;
+                    r1=RadVec[5*1+0]+delta*(RadVec[5*2+0]-RadVec[5*0+0])*0.5/dtt+delta*delta*0.5*(RadVec[5*2+0]-2*RadVec[5*1+0]+RadVec[5*0+0])/dtt/dtt;
+                    r2=RadVec[5*1+1]+delta*(RadVec[5*2+1]-RadVec[5*0+1])*0.5/dtt+delta*delta*0.5*(RadVec[5*2+1]-2*RadVec[5*1+1]+RadVec[5*0+1])/dtt/dtt;
+                    r3=RadVec[5*1+2]+delta*(RadVec[5*2+2]-RadVec[5*0+2])*0.5/dtt+delta*delta*0.5*(RadVec[5*2+2]-2*RadVec[5*1+2]+RadVec[5*0+2])/dtt/dtt;
+                    //RetSurf[iPanel*nDim+0]=-(r1*R)+Observer_Locations[iObserver][0]-U1*t;
+                    //RetSurf[iPanel*nDim+1]=-(r2*R)+Observer_Locations[iObserver][1]-U2*t;
+                    //RetSurf[iPanel*nDim+2]=-(r3*R)+Observer_Locations[iObserver][2]-U3*t;
+                    //}
+
+                }//iObserver_inner Loop
+            }//iPanel Loop
+            //cout<<"rank"<<rank<<"hey-25"<<endl;
+            //PARAVIEW Section for Output
+
+            //if ((config->GetOutput_FileFormat() == PARAVIEW)) {
+            //if (rank==MASTER_NODE)  cout<<"Extracting paraview file (.vtk) for post-processing"<<endl;
+            //Paraview_Output(config,iObserver,iSample, 0, 0, 1);
+            //if (rank==MASTER_NODE)  cout<<"End of paraview extraction"<<endl;
+            //}//if Paraview
+
+#ifdef HAVE_MPI
+            SU2_MPI::Allreduce(&Smallest_iLocSample,&Smallest_iLocSample,1,MPI_UNSIGNED_LONG,MPI_MIN,MPI_COMM_WORLD);
+#endif
+            if ( (Smallest_iLocSample>5) ){
+                for (iqSample=0; iqSample<nqSample-1; iqSample++){
+                    for (iPanel=0; iPanel<nPanel; iPanel++){
+                        for (iDim=0; iDim<nDim; iDim++){
+                            if(config->GetAcoustic_Prescribed_Motion()){
+                                Q[iqSample*nPanel*nDim + iPanel*nDim + iDim]=Q[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim];
+                            }else{
+                                if ( (iqSample>0) && (iqSample<nqSample-2) && (!(config->GetAcoustic_Prescribed_Motion())) ) {
+                                    Q[iqSample*nPanel*nDim + iPanel*nDim + iDim]=Q[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim];
+                                }
+                            }
+                            //n[iqSample*nPanel*nDim + iPanel*nDim + iDim]=n[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim];
+                            UnitaryNormal[iqSample*nPanel*nDim + iPanel*nDim + iDim]=UnitaryNormal[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim];
+                            //if (iqSample==nqSample-2) n[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim]=0;
+                            if (iqSample==nqSample-2) UnitaryNormal[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim]=0;
+                            surface_geo[iqSample*nPanel*nDim + iPanel*nDim + iDim]=surface_geo[(iqSample+1)*nPanel*nDim + iPanel*nDim + iDim];
+                        }
+                        F[iqSample*nPanel+iPanel]=F[(iqSample+1)*nPanel+iPanel];
+                    }
+                }
+                iSample2++;
+                if (iSample2< (nSample-nqSample)){
+                    if(config->GetAcoustic_Prescribed_Motion()) Pre_Mot=1;
+
+                    //if (rank == MASTER_NODE) {
+                    Read_TECPLOT_ASCII( config, geometry, iSample2, nqSample-1);
+
+                    SetSurfaceGeom(config, geometry, iSample2, nqSample - 1, iObserver_outer);
+                    ComputeNormal(config, geometry, iSample2, nqSample - 1, iObserver_outer);
+                    //}
+                }
+                if ( (iSample2< (nSample-nqSample-1)) && (!(config->GetAcoustic_Prescribed_Motion())) ){
+                    ComputeVelocities(config, iSample2, nqSample-2);
+                }
+            }
+
+        }//iSample Loop
+
+#ifdef HAVE_MPI
+        for (iObserver_inner=0; iObserver_inner<nObserver_inner; iObserver_inner++){
+			for (iSample=0; iSample<nSample; iSample++){
+				if(config->GetAcoustic_Inner_ObsLoop()){
+        				SU2_MPI::Reduce( &pp_TimeDomain_inner[iObserver_inner][iSample] , &pp_TimeDomainGlobal_inner[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM ,MASTER_NODE, MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &t_interp_inner[iObserver_inner][iSample] , &t_interp_inner[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_MAX, MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T1_I[iObserver_inner][iSample] , &T1_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T2_I[iObserver_inner][iSample] , &T2_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T3_I[iObserver_inner][iSample] , &T3_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T4_I[iObserver_inner][iSample] , &T4_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+				}else{
+					SU2_MPI::Reduce( &pp_TimeDomain_outer[iSample] , &pp_TimeDomainGlobal_outer[iSample] , 1 , MPI_DOUBLE , MPI_SUM ,MASTER_NODE, MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &t_interp_outer[iSample] , &t_interp_outer[iSample] , 1 , MPI_DOUBLE , MPI_MAX , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T1_O[iSample] , &T1_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T2_O[iSample] , &T2_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T3_O[iSample] , &T3_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+					SU2_MPI::Allreduce( &T4_O[iSample] , &T4_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+				}
+			}
+		}
+#endif
+
+        if (rank==MASTER_NODE){
+            for (iObserver_inner=0; iObserver_inner<nObserver_inner; iObserver_inner++){
+                pp_mean=0;
+                for (iSample=0; iSample<nSample; iSample++){
+                    if(config->GetAcoustic_Inner_ObsLoop()){
+                        iObserver=iObserver_inner;
+                        pp_mean = (pp_TimeDomainGlobal_inner[iObserver][iSample]+pp_mean*iSample)/(iSample+1);
+                    }else{
+                        iObserver=iObserver_outer;
+                        pp_mean = (pp_TimeDomainGlobal_outer[iSample]+pp_mean*iSample)/(iSample+1);
+                    }
+                }
+                if (ceil(log2(nSample))==floor(log2(nSample))){
+                    cout<<"FFT Transformation to obtain dB-Freq[Hz] "<<endl;
+                    if(config->GetAcoustic_Inner_ObsLoop()){
+                        FFT_AcousticPressureSignal(pp_mean,pp_TimeDomainGlobal_inner[iObserver],res_factor);
+                        snprintf(buffer, sizeof(char) * 32, "pp_FWH_fft_%03d", (iObserver_inner+1));
+                    }else{
+                        FFT_AcousticPressureSignal(pp_mean,pp_TimeDomainGlobal_outer,res_factor);
+                        snprintf(buffer, sizeof(char) * 32, "pp_FWH_fft_%03d", (iObserver_outer+1));
+                    }
+                    pp_fft_file.open(buffer);
+                    cout<<"Frequency[Hz] vs dB data can be found in "<<buffer<<" for Observer-"<<iObserver+1<<endl;
+                }
+
+                SPL_iObserver = 0.0;
+                snprintf(buffer, sizeof(char) * 32, "pp_FWH_%03d_Zone_%i", (iObserver+1), (iZone));
+                pp_FWH_file.open(buffer);
+
+                for (iSample=0; iSample<nSample; iSample++){
+                    if (iSample==0){
+                        pp_FWH_file <<  "Time"<<' '<<"P-Fluctuation"<<' '<<"Acoustic-Pressure"<<' '<<"Thickness"<<' '<<"Loading"<<' '<<"Term-1"<<' '<<"Term-2"<<' '<<"Term-3"<<' '<<"Term-4"<<endl;
+                    }
+                    if(config->GetAcoustic_Inner_ObsLoop()){
+                        pp_FWH_file << std::setprecision(15) <<t_interp_inner[iObserver][iSample] <<' '<<pp_TimeDomainGlobal_inner[iObserver][iSample]-pp_mean<<' '<<pp_TimeDomainGlobal_inner[iObserver][iSample]<< ' ' <<T1_I[iObserver][iSample]+T2_I[iObserver][iSample]<<' '<< T3_I[iObserver][iSample]+T4_I[iObserver][iSample]<<' '<<T1_I[iObserver][iSample]<<' '<<T2_I[iObserver][iSample]<<' '<<T3_I[iObserver][iSample]<<' '<<T4_I[iObserver][iSample]<<' '<<endl;
+                    }else{
+                        pp_FWH_file << std::setprecision(15) <<t_interp_outer[iSample] <<' '<<pp_TimeDomainGlobal_outer[iSample]-pp_mean<<' '<<pp_TimeDomainGlobal_outer[iSample]<< ' ' <<T1_O[iSample]+T2_O[iSample]<<' '<<T3_O[iSample]+T4_O[iSample]<<' '<<T1_O[iSample]<<' '<<T2_O[iSample]<<' '<<T3_O[iSample]<<' '<<T4_O[iSample]<<' '<<endl;
+                    }
+                    if (ceil(log2(nSample))==floor(log2(nSample))){
+                        if (iSample==0){
+                            pp_fft_file << "Frequency[Hz]"<<" "<<"dB"<<endl;
+                        }
+                        if ((iSample<(nSample/2+1)) && (iSample>0)){
+                            pp_fft_file << std::setprecision(15) << Fs*iSample/nSample<< ' '<< real(pp_fft[iSample])<< ' '<<endl;
+                        }
+                    }
+                    if(config->GetAcoustic_Inner_ObsLoop()){
+                        SPL_iObserver= SPL_iObserver + (pp_TimeDomainGlobal_inner[iObserver][iSample]-pp_mean)*(pp_TimeDomainGlobal_inner[iObserver][iSample]-pp_mean);
+                    }else{
+                        SPL_iObserver= SPL_iObserver + (pp_TimeDomainGlobal_outer[iSample]-pp_mean)*(pp_TimeDomainGlobal_outer[iSample]-pp_mean);
+                    }
+                }
+                SPL_iObserver = sqrt(SPL_iObserver/nSample);
+                SPL = SPL + SPL_iObserver;
+                pp_FWH_file.close();
+                pp_fft_file.close();
+                cout<<std::setprecision(15)<<"RMS(p')-FWH over observer#"<<iObserver+1<<" -------------------> "<<SPL_iObserver <<"  *******"<<endl;
+                cout<<"F1A Computation is finished for Observer#"<<iObserver+1<<". Tabulated data (Time-domain) can be found in "<< buffer<<" ."<<endl;
+            }
+        }
+    }//iObserver_Outer Loop
+    if (rank==MASTER_NODE){
+        SPL = SPL/nObserver;
+        cout<<endl<<std::setprecision(15)<<"****** RMS(p') averaged over "<<nObserver<<" observer locations = "<<SPL <<"  **************"<<endl;
+    }
+
+}
 
 
 
+void F1A::F1A_Formulation ( CConfig *config,unsigned long iObserver, unsigned long iPanel,  unsigned long iSample, unsigned long iLocSample, unsigned long i){
 
+#ifdef HAVE_MPI
+    int rank, nProcessor;
+        	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        	MPI_Comm_size(MPI_COMM_WORLD, &nProcessor);
+#endif
+    unsigned long iDim;
+    su2double Lnr,LnM, L_dotr, Qn, n_dot_Q, Qdotn, M, Mr,Mr1, M_dotr,n_dot,M_dot,L_dot;
+    su2double K,R,r,dS;
+    su2double dt_src;
+    dt_src=config->GetDelta_UnstTime()*SamplingFreq;
+    Lnr=0;LnM=0; L_dotr=0; Qn=0; n_dot_Q=0;  Qdotn=0; M=0; Mr=0; M_dotr=0;
+    //dS = AREA[iPanel];
+    dS = Area[iPanel];
 
+    for (iDim=0; iDim<nDim; iDim++){
+        r = RadVec[5*i+iDim];
+        M_dot=(Q[(iLocSample+1)*nPanel*nDim+iPanel*nDim+iDim]-Q[(iLocSample-1)*nPanel*nDim+iPanel*nDim+iDim])/2.0/dt_src/a_inf;
+        M_dotr=M_dotr+M_dot*r;
+        Mr=Mr+(Q[iLocSample*nPanel*nDim+iPanel*nDim+iDim]*r)/a_inf;
+        Mr1=1-Mr;
+        M=M + Q[iLocSample*nPanel*nDim+iPanel*nDim+iDim]*Q[iLocSample*nPanel*nDim+iPanel*nDim+iDim]/a_inf/a_inf;
+        Qdotn=Qdotn+M_dot*a_inf*UnitaryNormal[iLocSample*nPanel*nDim+iPanel*nDim+iDim];
+        n_dot=(UnitaryNormal[(iLocSample+1)*nPanel*nDim+iPanel*nDim+iDim]-UnitaryNormal[(iLocSample-1)*nPanel*nDim+iPanel*nDim+iDim])/2.0/dt_src;
+        n_dot_Q=n_dot_Q+n_dot*Q[iLocSample*nPanel*nDim+iPanel*nDim+iDim];
+        Qn=Qn+Q[iLocSample*nPanel*nDim+iPanel*nDim+iDim]*UnitaryNormal[iLocSample*nPanel*nDim+iPanel*nDim+iDim];
+        L_dot=(F[(iLocSample-1)*nPanel+iPanel]*UnitaryNormal[(iLocSample+1)*nPanel*nDim+iPanel*nDim+iDim]-F[(iLocSample-1)*nPanel+iPanel]*UnitaryNormal[(iLocSample-1)*nPanel*nDim+iPanel*nDim+iDim])/2.0/dt_src;
+        L_dotr= L_dotr+ L_dot*r;
+        Lnr     =Lnr    + F[iLocSample*nPanel+iPanel]*UnitaryNormal[iLocSample*nPanel*nDim+iPanel*nDim+iDim]*r;
+        LnM     =LnM    + F[iLocSample*nPanel+iPanel]*UnitaryNormal[iLocSample*nPanel*nDim+iPanel*nDim+iDim]*Q[iLocSample*nPanel*nDim+iPanel*nDim+iDim]/a_inf;
+    }
+    M  = sqrt( M );
+    R  = RadVec[5*i+nDim];
+    K=M_dotr*R+Mr*a_inf-M*M*a_inf;
+    T1=(FreeStreamDensity*(Qdotn+n_dot_Q))/R/Mr1/Mr1*(dS/4.0/M_PI);
+    T2= (FreeStreamDensity*Qn*K)/R/R/Mr1/Mr1/Mr1*(dS/4.0/M_PI);
+    T3= L_dotr/R/Mr1/Mr1/a_inf*(dS/4.0/M_PI);
+    T4= (Lnr-LnM)/R/R/Mr1/Mr1*(dS/4.0/M_PI);
+    T5= (Lnr*K)/R/R/Mr1/Mr1/Mr1/a_inf*(dS/4.0/M_PI);
+    pp_t= (T1+T2+T3+T4+T5);
+
+}
+
+void F1A::ComputeVelocities ( CConfig *config,  unsigned long iSample, unsigned long iLocSample){
+
+    unsigned long iPanel,iDim;
+    su2double rho,rho_ux, rho_uy,rho_uz,rho_E,TKE,ux,uy,uz,p, StaticEnergy;
+    su2double p1[3]= {0.0,0.0,0.0};
+    su2double p2[3]= {0.0,0.0,0.0};
+    su2double m1[3]= {0.0,0.0,0.0};
+    su2double m2[3]= {0.0,0.0,0.0};
+    su2double *U = new su2double [3];
+    U[0]=U1;U[1]=U2; U[2]=U3;
+    su2double DTT,Time_p1,Time_p2,Time_m1,Time_m2;
+    DTT = config->GetDelta_UnstTime()*SamplingFreq;
+
+    //unsigned long start_iter  =  config->GetUnst_RestartIter();
+    unsigned long start_iter = config->GetRestart_Iter();
+
+    Time_p1= config->GetDelta_UnstTime()*(start_iter+(iSample+iLocSample+1)*SamplingFreq);
+    Time_p2= config->GetDelta_UnstTime()*(start_iter+(iSample+iLocSample+2)*SamplingFreq);
+    Time_m1= config->GetDelta_UnstTime()*(start_iter+(iSample+iLocSample-1)*SamplingFreq);
+    Time_m2= config->GetDelta_UnstTime()*(start_iter+(iSample+iLocSample-2)*SamplingFreq);
+    /*Find velocities from node coordinates
+*        x_p1: x plus  1 =x(iSample+1)
+*        x_m1: x minus 1 =x(iSample-1)*/
+    for (iPanel=0; iPanel<nPanel; iPanel++){
+        for (int i=0; i<nDim; i++){
+            p1[i]=surface_geo[(iLocSample+1)*nPanel*nDim + iPanel*nDim + i]-U[i]*Time_p1;
+            //p2[i]=surface_geo[iPanel][iLocSample+2][i]-U[i]*Time_p2;
+            m1[i]=surface_geo[(iLocSample-1)*nPanel*nDim + iPanel*nDim + i]-U[i]*Time_m1;
+            //m2[i]=surface_geo[iPanel][iLocSample-2][i]-U[i]*Time_m2;
+            /*4th order accurate central difference*/
+            //Q[iPanel][iLocSample][i]=(-p2[i]+8*p1[i]-8*m1[i]+m2[i])/(12*DTT);
+            /*2nd order accurate central difference*/
+            Q[iLocSample*nPanel*nDim + iPanel*nDim + i]=(p1[i]-m1[i])/(2*DTT);
+        }
+        if (config->GetAD_Mode()){
+            if ( (iSample==0 && iLocSample==1) ){
+                rho = RHO[(iLocSample-1)*nPanel+iPanel];
+                rho_ux = RHO[(iLocSample-1)*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 0 ]+U1);
+                rho_uy = RHO[(iLocSample-1)*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 1 ]+U2);
+                if (nDim==3)  rho_uz = RHO[(iLocSample-1)*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 2 ]+U3);
+                TKE = 0.0;
+                rho_E = rho*(((F[(iLocSample-1)*nPanel+iPanel]+FreeStreamPressure)/(rho*(config->GetGamma()-1)))+0.5*((ux)*(ux)+(uy)*(uy)+(uz)*(uz))+TKE);
+                AD::RegisterInput(rho );
+                AD::RegisterInput(rho_ux );
+                AD::RegisterInput(rho_uy );
+                if (nDim==3) AD::RegisterInput(rho_uz );
+                AD::RegisterInput(rho_E );
+                AD::RegisterInput(TKE);
+            }
+            /*extract CONSERVATIVE flow data from a particular panel on the FWH surface*/
+            rho = RHO[iLocSample*nPanel+iPanel];
+            rho_ux = RHO[iLocSample*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 0 ]+U1);
+            rho_uy = RHO[iLocSample*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 1 ]+U2);
+            if (nDim==3)  rho_uz = RHO[iLocSample*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 2 ]+U3);
+            TKE = 0.0;
+            rho_E = rho*(((F[iLocSample*nPanel+iPanel]+FreeStreamPressure)/(rho*(config->GetGamma()-1)))+0.5*((ux)*(ux)+(uy)*(uy)+(uz)*(uz))+TKE);
+            AD::RegisterInput(rho );
+            AD::RegisterInput(rho_ux );
+            AD::RegisterInput(rho_uy );
+            if (nDim==3) AD::RegisterInput(rho_uz );
+            AD::RegisterInput(rho_E );
+            AD::RegisterInput(TKE);
+            ux = rho_ux/rho;
+            uy = rho_uy/rho;
+            uz = 0.0;
+            if (nDim==3) uz= rho_uz/rho;
+            StaticEnergy =  rho_E/rho-0.5*(ux*ux+uy*uy+uz*uz)-TKE;
+            p = (config->GetGamma()-1)*rho*StaticEnergy;
+
+            if ((rho!=0) && (rho_ux!=0) && (rho_uy!=0) && (rho_uz!=0) && (p!=0) ) {
+                Q[iLocSample*nPanel*nDim + iPanel*nDim + 0 ]= ux-U1;
+                Q[iLocSample*nPanel*nDim + iPanel*nDim + 1 ]= ux-U2;
+                Q[iLocSample*nPanel*nDim + iPanel*nDim + 2 ]= ux-U3;
+                F[iLocSample*nPanel+iPanel]=p-FreeStreamPressure;
+            }
+            if (iSample==nSample-nqSample-2 && iLocSample==nqSample-2){
+                rho = RHO[(iLocSample+1)*nPanel+iPanel];
+                rho_ux = RHO[(iLocSample+1)*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 0 ]+U1);
+                rho_uy = RHO[(iLocSample+1)*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 1 ]+U2);
+                if (nDim==3)  rho_uz = RHO[(iLocSample+1)*nPanel+iPanel]*(Q[iLocSample*nPanel*nDim + iPanel*nDim + 2 ]+U3);
+                TKE = 0.0;
+                rho_E = rho*(((F[(iLocSample+1)*nPanel+iPanel]+FreeStreamPressure)/(rho*(config->GetGamma()-1)))+0.5*((ux)*(ux)+(uy)*(uy)+(uz)*(uz))+TKE);
+                AD::RegisterInput(rho );
+                AD::RegisterInput(rho_ux );
+                AD::RegisterInput(rho_uy );
+                if (nDim==3) AD::RegisterInput(rho_uz );
+                AD::RegisterInput(rho_E );
+                AD::RegisterInput(TKE);
+            }
+        }
+    }
+    delete [] U;
+
+}
+
+void F1A::FFT_AcousticPressureSignal(su2double pp_mean, su2double *pp_TimeDomain, unsigned long res_factor){
+    unsigned long iPanel, iSample;
+    FFT* FFT_container = new FFT() ;
+    su2double pLa;
+
+    /*perform FFT on Acoustic Pressure Signal*/
+    for (iSample=0; iSample<nSample/res_factor; iSample++){
+        pp_fft[iSample].real(pp_TimeDomain[iSample*res_factor]-pp_mean);
+    }
+    /* Writing the complex array data*/
+    CArray dataPP(pp_fft ,nSample/res_factor);
+    /* Call the FFT function for performing the forward fft */
+    FFT_container->fft_r2(dataPP);
+    for (iSample=0; iSample<nSample/res_factor; iSample++){
+        pLa = abs(real(dataPP[iSample]));
+        pp_fft[iSample] = 20*log10(pLa/0.00002); // 0.00002 threshold of hearing
+    }
+}
 

@@ -680,6 +680,7 @@ private:
   unsigned long Acoustic_CD_Dependent;
   unsigned long Acoustic_CD_iSample;
   unsigned long Acoustic_CD_iPanel;
+  unsigned long Acoustic_nqSamples;
 
   unsigned short nMarker_Monitoring,  /*!< \brief Number of markers to monitor. */
   nMarker_Designing,                  /*!< \brief Number of markers for the objective function. */
@@ -5241,6 +5242,8 @@ public:
    * \return TimeDomain3D information, if <code>TRUE</code> then the code will use the 3D Time domain formulation. Otherwise the frequency domain formulation is used
    */
   bool GetTimeDomain3D(void) const { return TimeDomain3D; }
+
+  unsigned long GetAcoustic_nqSamples(void) const { return Acoustic_nqSamples; }
 
 
   /* It indicates location of observer loop it returns inner side or outer side*/
