@@ -30,9 +30,14 @@
 
 //#include "../../SU2_CFD/include/postprocessing_structure.hpp"
 
+#include <fenv.h>
+
 using namespace std;
 
 int main(int argc, char *argv[]) {
+
+  // Comment this line if you dont want to throw an exception for debugging for nan etc.
+  feenableexcept(FE_INVALID | FE_OVERFLOW);
 
   unsigned short iZone, iInst;
   su2double StartTime = 0.0, StopTime = 0.0, UsedTime = 0.0;
@@ -634,23 +639,23 @@ int main(int argc, char *argv[]) {
                     (TimeIter == 0 || (config_container[ZONE_0]->GetRestart() && ((long)TimeIter ==  SU2_TYPE::Int(config_container[ZONE_0]->GetRestart_Iter()) ||
                                                                                   TimeIter % config_container[ZONE_0]->GetVolume_Wrt_Freq() == 0 ||
                                                                                   TimeIter+1 == config_container[ZONE_0]->GetnTime_Iter())))) {
-                  solver_container[iZone][INST_0] = new CBaselineSolver(geometry_container[iZone][INST_0], config_container[iZone]);
-                  output[iZone] = new CBaselineOutput(config_container[iZone], geometry_container[iZone][INST_0]->GetnDim(), solver_container[iZone][INST_0]);
-                  output[iZone]->PreprocessVolumeOutput(config_container[iZone]);
-                  output[iZone]->PreprocessHistoryOutput(config_container[iZone], false);
+                  //solver_container[iZone][INST_0] = new CBaselineSolver(geometry_container[iZone][INST_0], config_container[iZone]);
+                  //output[iZone] = new CBaselineOutput(config_container[iZone], geometry_container[iZone][INST_0]->GetnDim(), solver_container[iZone][INST_0]);
+                  //output[iZone]->PreprocessVolumeOutput(config_container[iZone]);
+                  //output[iZone]->PreprocessHistoryOutput(config_container[iZone], false);
 
-                  SolutionInstantiated[iZone] = true;
+                  //SolutionInstantiated[iZone] = true;
                 }
-                  config_container[iZone]->SetiInst(INST_0);
-                  solver_container[iZone][INST_0]->LoadRestart(geometry_container[iZone], &solver_container[iZone], config_container[iZone], TimeIter, true);
+                  //config_container[iZone]->SetiInst(INST_0);
+                  //solver_container[iZone][INST_0]->LoadRestart(geometry_container[iZone], &solver_container[iZone], config_container[iZone], TimeIter, true);
               }
 
               if (rank == MASTER_NODE)
-                cout << "Writing the volume solution for time step " << TimeIter << "." << endl;
+                //cout << "Writing the volume solution for time step " << TimeIter << "." << endl;
 
               for (iZone = 0; iZone < nZone; iZone++){
 
-                WriteFiles(config_container[iZone], geometry_container[iZone][INST_0], &solver_container[iZone][INST_0], output[iZone], TimeIter);
+                //WriteFiles(config_container[iZone], geometry_container[iZone][INST_0], &solver_container[iZone][INST_0], output[iZone], TimeIter);
 
               }
 
@@ -737,22 +742,22 @@ int main(int argc, char *argv[]) {
                     (TimeIter == 0 || ((config_container[ZONE_0]->GetRestart() && (SU2_TYPE::Int(TimeIter) ==  SU2_TYPE::Int(config_container[ZONE_0]->GetRestart_Iter()))) ||
                                        TimeIter % config_container[ZONE_0]->GetVolume_Wrt_Freq()  == 0 ||
                                        TimeIter+1 == config_container[ZONE_0]->GetnTime_Iter()))) {
-                  solver_container[iZone][INST_0] = new CBaselineSolver(geometry_container[iZone][INST_0], config_container[iZone]);
-                  output[iZone] = new CBaselineOutput(config_container[iZone], geometry_container[iZone][INST_0]->GetnDim(), solver_container[iZone][INST_0]);
-                  output[iZone]->PreprocessVolumeOutput(config_container[iZone]);
-                  output[iZone]->PreprocessHistoryOutput(config_container[iZone], false);
+                  //solver_container[iZone][INST_0] = new CBaselineSolver(geometry_container[iZone][INST_0], config_container[iZone]);
+                  //output[iZone] = new CBaselineOutput(config_container[iZone], geometry_container[iZone][INST_0]->GetnDim(), solver_container[iZone][INST_0]);
+                  //output[iZone]->PreprocessVolumeOutput(config_container[iZone]);
+                  //output[iZone]->PreprocessHistoryOutput(config_container[iZone], false);
 
-                  SolutionInstantiated = true;
+                  //SolutionInstantiated = true;
                 }
-                config_container[iZone]->SetiInst(INST_0);
-                solver_container[iZone][INST_0]->LoadRestart(geometry_container[iZone], &solver_container[iZone], config_container[iZone], TimeIter, true);
+                //config_container[iZone]->SetiInst(INST_0);
+                //solver_container[iZone][INST_0]->LoadRestart(geometry_container[iZone], &solver_container[iZone], config_container[iZone], TimeIter, true);
               }
 
               if (rank == MASTER_NODE)
-                cout << "Writing the volume solution for time step " << TimeIter << "." << endl;
+                //cout << "Writing the volume solution for time step " << TimeIter << "." << endl;
               for (iZone = 0; iZone < nZone; iZone++){
 
-                WriteFiles(config_container[iZone], geometry_container[iZone][INST_0], &solver_container[iZone][INST_0], output[iZone], TimeIter);
+               // WriteFiles(config_container[iZone], geometry_container[iZone][INST_0], &solver_container[iZone][INST_0], output[iZone], TimeIter);
 
               }
         }
@@ -787,12 +792,32 @@ int main(int argc, char *argv[]) {
   }
 
 
-  F1A_container[ZONE_0]-> iZone = 0;
-  F1A_container[ZONE_0]-> nZone = nZone;
+  if (rank == MASTER_NODE)
+      cout << endl <<"------------------------- Computing Far Field Noise -----------------------" << endl;
+  for (iZone = 0; iZone < nZone; iZone++) {
+      if (rank == MASTER_NODE) cout<<"iZone: "<<iZone<<" and nZone: "<<nZone<<endl;
+      F1A_container[iZone]-> iZone = iZone;
+      F1A_container[iZone]-> nZone = nZone;
+      F1A_container[iZone]-> Initialize(config_container[iZone],geometry_container[iZone][INST_0]);
 
-  F1A_container[ZONE_0]-> Initialize(config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
-  F1A_container[ZONE_0]-> ComputeMinMaxInc_Time(config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
-  F1A_container[ZONE_0]-> F1A_SourceTimeDominant(config_container[ZONE_0],geometry_container[ZONE_0][INST_0]);
+      if (iZone == 0){
+          F1A_container[iZone]-> ComputeMinMaxInc_Time(config_container[iZone],geometry_container[iZone][INST_0]);
+      }else{
+          for(int iObserver = 0; iObserver<F1A_container[ZONE_0]->nObserver ; iObserver++){
+              F1A_container[iZone]->StartTime[iObserver]= F1A_container[ZONE_0]->StartTime[iObserver];
+              F1A_container[iZone]->EndTime[iObserver]= F1A_container[ZONE_0]->EndTime[iObserver];
+              F1A_container[iZone]->dt[iObserver]= F1A_container[ZONE_0]->dt[iObserver];
+          }
+      }
+      F1A_container[iZone]-> F1A_SourceTimeDominant(config_container[iZone],geometry_container[iZone][INST_0]);
+  }
+  if (nZone > 1){
+      if (rank == MASTER_NODE){
+          cout<< endl<<"-------- Combining zones-----------"<<endl;
+          F1A_container[ZONE_0]-> CombineZones (config_container[ZONE_0]);
+          cout<< endl<<"Combined acoustic datan can be found in 'pp_FWH_(ObserverID)_Combined'. "<<endl;
+      }
+  }
 
 
 /*

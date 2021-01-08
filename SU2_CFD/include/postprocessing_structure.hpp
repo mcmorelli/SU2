@@ -239,26 +239,27 @@ public:
     su2double *RadVec;
     su2double *Observer_Locations;
     su2double *pp_out;
+    su2double *FWH_Surf_Vel;
+    su2double *FWH_Surf_pp;
 
     complex <su2double>  *pp_fft;
 
     F1A(CConfig *config, CGeometry *geometry);
     ~F1A(void);
 
-    //new implementation
     void Initialize( CConfig *config, CGeometry *geometry);
     static void UpdateDualGrid(CGeometry *geometry, CConfig *config);
+    void LoadNormal( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver);
     void ComputeNormal( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver);
     void SetSurfaceGeom(CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver);
     void Read_TECPLOT_ASCII( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample );
-
-    //legacy implementation
+    void ComputeModifiedVelocity ( CConfig *config,  unsigned long iSample, unsigned long iLocSample);
     void ComputeMinMaxInc_Time( CConfig *config, CGeometry *geometry );
     void ComputeObserverTime( CConfig *config, unsigned long iObserver, unsigned long iPanel,unsigned long iSample, unsigned long iLocSample, unsigned long i);
     void F1A_SourceTimeDominant ( CConfig* config, CGeometry *geometry);
     void F1A_Formulation ( CConfig *config,unsigned long iObserver, unsigned long iPanel,  unsigned long iSample, unsigned long iLocSample, unsigned long i);
-    void ComputeVelocities ( CConfig *config,  unsigned long iSample, unsigned long iLocSample);
     void FFT_AcousticPressureSignal(su2double pp_mean, su2double *pp_TimeDomain, unsigned long res_factor);
+    void CombineZones( CConfig *config);
 
 private:
     int rank, size;
