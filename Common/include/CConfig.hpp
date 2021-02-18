@@ -470,6 +470,8 @@ private:
   Kind_GridMovement,               /*!< \brief Kind of the static mesh movement. */
   *Kind_SurfaceMovement,           /*!< \brief Kind of the static mesh movement. */
   nKind_SurfaceMovement,           /*!< \brief Kind of the dynamic mesh movement. */
+  *Kind_InterfaceDualElem,           /*!< \brief Kind of the interface surface dual element for WA interpolation. */
+  nKind_InterfaceDualElem,           /*!< \brief Kind of the interface surface dual element for WA interpolation. */
   Kind_Gradient_Method,            /*!< \brief Numerical method for computation of spatial gradients. */
   Kind_Gradient_Method_Recon,      /*!< \brief Numerical method for computation of spatial gradients used for upwind reconstruction. */
   Kind_Deform_Linear_Solver,             /*!< Numerical method to deform the grid */
@@ -5622,7 +5624,15 @@ public:
    */
   unsigned short GetKind_SurfaceMovement(unsigned short iMarkerMoving) const { return Kind_SurfaceMovement[iMarkerMoving];}
 
+
   /*!
+   * \brief Get the type of surface motion.
+   * \param[in] iMarkerMoving -  Index of the moving marker (as specified in Marker_Moving).
+   * \return Type of surface motion.
+   */
+  unsigned short GetKind_InterfaceDualElem(unsigned short iMarkerInterface) const { return Kind_InterfaceDualElem[iMarkerInterface];}
+
+    /*!
    * \brief Get the mach number based on the mesh velocity and freestream quantities.
    * \return Mach number based on the mesh velocity and freestream quantities.
    */

@@ -324,7 +324,18 @@ public:
    * \param[in] element  - double array where element node coordinates will be stored
    */  
   int Build_3D_surface_element(unsigned long *map, unsigned long *startIndex, unsigned long* nNeighbor, su2double *coord, unsigned long centralNode, su2double** element);
-   
+
+  /*!
+   * \brief For 3-Dimensional grids, build the dual surface element
+   * \param[in] map         - array containing the index of the boundary points connected to the node
+   * \param[in] startIndex  - for each vertex specifies the corresponding index in the global array containing the indexes of all its neighbouring vertexes
+   * \param[in] nNeighbour  - for each vertex specifies the number of its neighbouring vertexes (on the boundary)
+   * \param[in] coord       - array containing the coordinates of all the boundary vertexes
+   * \param[in] centralNode - label of the vertex around which the dual surface element is built
+   * \param[in] element  - double array where element node coordinates will be stored
+   */
+  int Build_quad_surface_element(unsigned long *map, unsigned long *startIndex, unsigned long* nNeighbor, su2double *coord, unsigned long centralNode, su2double** element);
+
   /*!
    * \brief For 2-Dimensional grids, compute intersection length of two segments projected along a given direction
    * \param[in] A1 - first  point of segment A

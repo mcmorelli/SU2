@@ -664,6 +664,18 @@ static const MapType<string, ENUM_SURFACEMOVEMENT> SurfaceMovement_Map = {
 };
 
 /*!
+ * \brief type of dual elements on each interface when using the WA interpolation approach.
+ */
+enum ENUM_INTERFACE_ELEM_TYPE {
+    HEXA = 0,      /*!< \brief Hexa dual elements. */
+    QUAD = 1       /*!< \brief Quad dual elements.  */
+};
+static const MapType<string, ENUM_INTERFACE_ELEM_TYPE> InterfaceDualElem_Map = {
+    MakePair("HEXA", HEXA)
+    MakePair("QUAD", QUAD)
+};
+
+/*!
  * \brief Type of wind gusts
  */
 enum ENUM_GUST_TYPE {

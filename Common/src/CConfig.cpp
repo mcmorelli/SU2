@@ -933,6 +933,8 @@ void CConfig::SetPointersNull(void) {
 
   nKind_SurfaceMovement = 0;
   Kind_SurfaceMovement = NULL;
+  nKind_InterfaceDualElem = 0;
+  Kind_InterfaceDualElem = NULL;
   LocationStations   = NULL;
   Motion_Origin     = NULL;
   Translation_Rate       = NULL;
@@ -2041,6 +2043,8 @@ void CConfig::SetConfig_Options() {
   addEnumOption("GRID_MOVEMENT", Kind_GridMovement, GridMovement_Map, NO_MOVEMENT);
   /* DESCRIPTION: Type of surface motion */
   addEnumListOption("SURFACE_MOVEMENT",nKind_SurfaceMovement, Kind_SurfaceMovement, SurfaceMovement_Map);
+  /* DESCRIPTION: Type of surface interface dual element */
+  addEnumListOption("INTERFACE_DUAL_ELEM",nKind_InterfaceDualElem, Kind_InterfaceDualElem, InterfaceDualElem_Map);
   /* DESCRIPTION: Marker(s) of moving surfaces (MOVING_WALL or DEFORMING grid motion). */
   addStringListOption("MARKER_MOVING", nMarker_Moving, Marker_Moving);
   /* DESCRIPTION: Mach number (non-dimensional, based on the mesh velocity and freestream vals.) */

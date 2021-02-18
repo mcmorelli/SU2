@@ -1541,6 +1541,8 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
 
   int markDonor, markTarget;
 
+  unsigned short DonorDualElement, TargetDualElement;
+
   /* --- Target variables --- */
 
   unsigned long target_iPoint, jVertexTarget;
@@ -1597,7 +1599,11 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
     /*--- On the target side: find the tag of the boundary sharing the interface ---*/
     markTarget = Find_InterfaceMarker(config[targetZone], iMarkerInt);
 
-    /*--- Checks if the zone contains the interface, if not continue to the next step ---*/
+    /*--- Get the kind of surface dual elements for each interface ---*/
+    DonorDualElement = config[donorZone]->GetKind_InterfaceDualElem(markDonor);
+    TargetDualElement = config[targetZone]->GetKind_InterfaceDualElem(markTarget);
+
+      /*--- Checks if the zone contains the interface, if not continue to the next step ---*/
     if( !CheckInterfaceBoundary(markDonor, markTarget) )
       continue;
 
@@ -1934,13 +1940,24 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
         
           nEdges_target = Target_nLinkedNodes[target_iPoint];
 
-          nNode_target = 2*(nEdges_target + 1);
-          
-          target_element = new su2double*[nNode_target];
-          for (ii = 0; ii < nNode_target; ii++)
-            target_element[ii] = new su2double[nDim];
-            
-          nNode_target = Build_3D_surface_element(Target_LinkedNodes, Target_StartLinkedNodes, Target_nLinkedNodes, TargetPoint_Coord, target_iPoint, target_element);
+          if (TargetDualElement == QUAD){
+            nNode_target = 26;
+
+            target_element = new su2double*[nNode_target];
+            for (ii = 0; ii < nNode_target; ii++)
+              target_element[ii] = new su2double[nDim];
+
+            nNode_target = Build_quad_surface_element(Target_LinkedNodes, Target_StartLinkedNodes, Target_nLinkedNodes, TargetPoint_Coord, target_iPoint, target_element);
+          }
+          else {
+            nNode_target = 2*(nEdges_target + 1);
+
+            target_element = new su2double*[nNode_target];
+            for (ii = 0; ii < nNode_target; ii++)
+              target_element[ii] = new su2double[nDim];
+
+            nNode_target = Build_3D_surface_element(Target_LinkedNodes, Target_StartLinkedNodes, Target_nLinkedNodes, TargetPoint_Coord, target_iPoint, target_element);
+          }
 
           /*--- Brute force to find the closest donor_node ---*/
 
@@ -1968,11 +1985,24 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
 
           nEdges_donor = Donor_nLinkedNodes[donor_iPoint];
 
-          donor_element = new su2double*[ 2*nEdges_donor + 2 ];
-          for (ii = 0; ii < 2*nEdges_donor + 2; ii++)
-            donor_element[ii] = new su2double[nDim];                
+          if (DonorDualElement == QUAD){
+            nNode_donor = 26;
 
-          nNode_donor = Build_3D_surface_element(Donor_LinkedNodes, Donor_StartLinkedNodes, Donor_nLinkedNodes, DonorPoint_Coord, donor_iPoint, donor_element);
+            donor_element = new su2double*[ nNode_donor ];
+            for (ii = 0; ii < nNode_donor; ii++)
+              donor_element[ii] = new su2double[nDim];
+
+            nNode_donor = Build_quad_surface_element(Donor_LinkedNodes, Donor_StartLinkedNodes, Donor_nLinkedNodes, DonorPoint_Coord, donor_iPoint, donor_element);
+          }
+          else{
+            nNode_donor = 2*nEdges_donor + 2;
+
+            donor_element = new su2double*[ nNode_donor ];
+            for (ii = 0; ii < nNode_donor; ii++)
+              donor_element[ii] = new su2double[nDim];
+
+            nNode_donor = Build_3D_surface_element(Donor_LinkedNodes, Donor_StartLinkedNodes, Donor_nLinkedNodes, DonorPoint_Coord, donor_iPoint, donor_element);
+          }
 
           Area = 0;
           for (ii = 1; ii < nNode_target-1; ii++){
@@ -1982,7 +2012,7 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
             }
           }
 
-          for (ii = 0; ii < 2*nEdges_donor + 2; ii++)
+          for (ii = 0; ii < nNode_donor; ii++)
             delete [] donor_element[ii];
           delete [] donor_element;
 
@@ -2068,18 +2098,28 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
 
                   nEdges_donor = Donor_nLinkedNodes[donor_iPoint];
 
-                  donor_element = new su2double*[ 2*nEdges_donor + 2 ];   
-                  for (ii = 0; ii < 2*nEdges_donor + 2; ii++)
-                    donor_element[ii] = new su2double[nDim];             
+                  if (DonorDualElement == QUAD){
+                    nNode_donor = 26;
+                    donor_element = new su2double*[ nNode_donor ];
+                    for (ii = 0; ii < nNode_donor; ii++)
+                      donor_element[ii] = new su2double[nDim];
 
-                  nNode_donor = Build_3D_surface_element(Donor_LinkedNodes, Donor_StartLinkedNodes, Donor_nLinkedNodes, DonorPoint_Coord, donor_iPoint, donor_element);
+                    nNode_donor = Build_quad_surface_element(Donor_LinkedNodes, Donor_StartLinkedNodes, Donor_nLinkedNodes, DonorPoint_Coord, donor_iPoint, donor_element);
+                  }
+                  else {
+                    donor_element = new su2double*[ 2*nEdges_donor + 2 ];
+                    for (ii = 0; ii < 2*nEdges_donor + 2; ii++)
+                      donor_element[ii] = new su2double[nDim];
+
+                    nNode_donor = Build_3D_surface_element(Donor_LinkedNodes, Donor_StartLinkedNodes, Donor_nLinkedNodes, DonorPoint_Coord, donor_iPoint, donor_element);
+                  }
 
                   tmp_Area = 0;
                   for (ii = 1; ii < nNode_target-1; ii++)
                     for (jj = 1; jj < nNode_donor-1; jj++)
                       tmp_Area += Compute_Triangle_Intersection(target_element[0], target_element[ii], target_element[ii+1], donor_element[0], donor_element[jj], donor_element[jj+1], Normal);
 
-                  for (ii = 0; ii < 2*nEdges_donor + 2; ii++)
+                  for (ii = 0; ii < nNode_donor; ii++)
                     delete [] donor_element[ii];
                   delete [] donor_element;
  
@@ -2154,7 +2194,7 @@ void CSlidingMesh::Set_TransferCoeff(CConfig **config){
             //cout <<rank << " Global Point " << Global_Point<<" iDonor " << iDonor <<" coeff " << coeff <<" gp " << pGlobalPoint << endl;               
           }
 
-          for (ii = 0; ii < 2*nEdges_target + 2; ii++)
+          for (ii = 0; ii < nNode_target; ii++)
             delete [] target_element[ii];
           delete [] target_element;
           
@@ -2299,6 +2339,197 @@ int CSlidingMesh::Build_3D_surface_element(unsigned long *map, unsigned long *st
 
   return (int)iElementNode;
   
+}
+
+int CSlidingMesh::Build_quad_surface_element(unsigned long *map, unsigned long *startIndex, unsigned long* nNeighbor, su2double *coord, unsigned long centralNode, su2double** element){
+
+    /*--- Given a node "centralNode", this routines reconstruct the vertex centered surface quadrilateral element around the node and stores it into "element" ---*/
+    /*--- Returns the number of points included in the element ---*/
+
+    unsigned long iNode, jNode, kNode, lNode, mNode, ElementIndex, iPoint, jPoint, kPoint, lPoint, nOuterNodes;
+    unsigned short nDim = 3, iDim, nTmp, nTmp2;
+    unsigned long *OuterNodes, *ptr, *ptr2;
+    int NodeIndex, nQuadNodes;
+    unsigned long **QuadElements;
+    bool duplicatePoint;
+    duplicatePoint = false;
+
+    nQuadNodes = 4;
+
+    /* --- Store central node as element first point --- */
+    for (iDim = 0; iDim < nDim; iDim++) {
+        element[0][iDim] = coord[centralNode * nDim + iDim];
+    }
+
+    /* --- Get the number of nodes directly connected to the central node  --- */
+    nOuterNodes = nNeighbor[centralNode];
+
+    /* --- Array containing the points connected to the central node --- */
+    OuterNodes = &map[ startIndex[centralNode] ];
+
+    /* --- Allocate auxiliary structure, vectors are longer than needed but this avoid further re-allocations due to length variation --- */
+    QuadElements = new unsigned long*[nOuterNodes];
+    for ( int i = 0; i < nOuterNodes; i++ ) {
+        QuadElements[i] = new unsigned long[nQuadNodes];
+    }
+
+    for ( int i = 0; i < nOuterNodes; i++ ){
+        for (int j = 0; j < nQuadNodes; j++)
+            QuadElements[i][j] = -1;
+    }
+
+    NodeIndex = 0;
+
+    /* --- Build and order the segments of a quad dual element --- */
+    while ((nOuterNodes - NodeIndex) > 0) {
+
+        for (iNode = 0; iNode < nOuterNodes; iNode++) {
+            iPoint = OuterNodes[iNode];
+            ptr = &map[startIndex[iPoint]];
+            nTmp = nNeighbor[iPoint];
+
+            for (jNode = 0; jNode < nTmp; jNode++) {
+                jPoint = ptr[jNode];
+
+                for (kNode = 0; kNode < nOuterNodes; kNode++) {
+                    kPoint = OuterNodes[kNode];
+                    ptr2 = &map[startIndex[kPoint]];
+                    nTmp2 = nNeighbor[kPoint];
+
+                    for (lNode = 0; lNode < nTmp2; lNode++) {
+                        lPoint = ptr2[lNode];
+
+                        if (jPoint == lPoint && kPoint != iPoint && lPoint != centralNode) { //quad segments
+                            if (NodeIndex == 0) {
+                                QuadElements[NodeIndex][0] = centralNode;
+                                QuadElements[NodeIndex][1] = iPoint;
+                                QuadElements[NodeIndex][2] = lPoint;
+                                QuadElements[NodeIndex][3] = kPoint;
+                                NodeIndex++;
+                                break;
+                            } else {
+                                for (mNode = 0; mNode < nOuterNodes; mNode++) {
+                                    if (iPoint == QuadElements[mNode][3] && lPoint != QuadElements[mNode][2]) {
+                                        for (int tmpNode = 0; tmpNode < nOuterNodes; tmpNode++){
+                                            if (QuadElements[tmpNode][3] == kPoint){
+                                                duplicatePoint = true;
+                                            }
+                                        }
+                                        if (!duplicatePoint){
+                                            QuadElements[NodeIndex][0] = centralNode;
+                                            QuadElements[NodeIndex][1] = iPoint;
+                                            QuadElements[NodeIndex][2] = lPoint;
+                                            QuadElements[NodeIndex][3] = kPoint;
+                                            NodeIndex++;
+                                            break;
+                                        }
+                                    }
+                                    duplicatePoint = false;
+                                }
+                            }
+                        }
+                        else if (kPoint == jPoint && lPoint == iPoint){ //tri segments
+                            if (NodeIndex == 0) {
+                                QuadElements[NodeIndex][0] = centralNode;
+                                QuadElements[NodeIndex][1] = iPoint;
+                                QuadElements[NodeIndex][2] = -1;
+                                QuadElements[NodeIndex][3] = kPoint;
+                                NodeIndex++;
+                                break;
+                            } else {
+                                for (mNode = 0; mNode < nOuterNodes; mNode++) {
+                                    if (iPoint == QuadElements[mNode][3]) {
+                                        for (int tmpNode = 0; tmpNode < nOuterNodes; tmpNode++){
+                                            if (QuadElements[tmpNode][3] == kPoint){
+                                                duplicatePoint = true;
+                                            }
+                                        }
+                                        if (!duplicatePoint){
+                                            QuadElements[NodeIndex][0] = centralNode;
+                                            QuadElements[NodeIndex][1] = iPoint;
+                                            QuadElements[NodeIndex][2] = -1;
+                                            QuadElements[NodeIndex][3] = kPoint;
+                                            NodeIndex++;
+                                            break;
+                                        }
+                                    }
+                                    duplicatePoint = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    NodeIndex = 0;
+    ElementIndex = 1;
+
+    /* --- Build array containing the quad dual element by finding the mid point of each edge and the baricenter of each face.
+     * Each quad is split through its diagonal connecting the central node, baricenter and 4th node.   --- */
+    while ((nOuterNodes - NodeIndex) > 0) {
+
+        if (QuadElements[NodeIndex][2] == -1){ //tri segments
+            for (iDim = 0; iDim < nDim; iDim++) {
+                element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex][1] * nDim + iDim]) / 2;
+            }
+            ElementIndex++;
+
+            for (iDim = 0; iDim < nDim; iDim++) {
+                element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex][1] * nDim + iDim] + coord[QuadElements[NodeIndex][3] * nDim + iDim]) / 3;
+            }
+            ElementIndex++;
+        }
+        else { //quad segments
+            for (iDim = 0; iDim < nDim; iDim++) {
+                element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex][1] * nDim + iDim]) / 2;
+            }
+            ElementIndex++;
+
+            for (iDim = 0; iDim < nDim; iDim++) {
+                element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex][1] * nDim + iDim] + coord[QuadElements[NodeIndex][2] * nDim + iDim]) / 3;
+            }
+            ElementIndex++;
+
+            for (iDim = 0; iDim < nDim; iDim++) {
+                element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex][2] * nDim + iDim]) / 2;
+            }
+            ElementIndex++;
+
+            for (iDim = 0; iDim < nDim; iDim++) {
+                element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex][2] * nDim + iDim] + coord[QuadElements[NodeIndex][3] * nDim + iDim]) / 3;
+            }
+            ElementIndex++;
+        }
+
+        NodeIndex++;
+
+    }
+
+    // This is a closed element, so add again element 1 to the end of the structure, useful later
+    if(QuadElements[NodeIndex-1][3] == QuadElements[0][1]){
+
+        for (iDim = 0; iDim < nDim; iDim++) {
+            element[ElementIndex][iDim] = element[1][iDim];
+        }
+        ElementIndex++;
+    }
+    else {
+        for (iDim = 0; iDim < nDim; iDim++) {
+            element[ElementIndex][iDim] = (element[0][iDim] + coord[QuadElements[NodeIndex - 1][3] * nDim + iDim]) / 2;
+        }
+        ElementIndex++;
+    }
+
+    for ( int i = 0; i < nOuterNodes; i++ ) {
+        delete[] QuadElements[i];
+    }
+    delete [] QuadElements;
+
+    return (int)ElementIndex;
+
 }
 
 su2double CSlidingMesh::ComputeLineIntersectionLength(su2double* A1, su2double* A2, su2double* B1, su2double* B2, su2double* Direction){
