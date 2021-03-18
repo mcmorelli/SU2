@@ -640,6 +640,7 @@ void CMeshSolver::SetBoundaryDisplacements(CGeometry *geometry, CNumerics *numer
     Surface_Plunging(geometry, config, config->GetTimeIter());
     Surface_Pitching(geometry, config, config->GetTimeIter());
     Surface_Rotating(geometry, config, config->GetTimeIter());
+    PulsatingSphere(geometry, config, config->GetTimeIter());
   }
 
   unsigned short iMarker;
@@ -1430,4 +1431,72 @@ void CMeshSolver::Surface_Translating(CGeometry *geometry, CConfig *config, unsi
     config->SetRefOriginMoment_Y(jMarker, Center[1]);
     config->SetRefOriginMoment_Z(jMarker, Center[2]);
   }
+}
+
+void CMeshSolver::PulsatingSphere(CGeometry *geometry, CConfig *config, unsigned long iter) {
+
+    su2double deltaT, time_new, time_old, Lref;
+    const su2double* Coord = nullptr;
+    su2double VarCoordAbs[3] = {0.0};
+    su2double VarCoord[3] = {0.0};
+    unsigned short iMarker, jMarker, iDim;
+    unsigned long iPoint, iVertex;
+    string Marker_Tag, Moving_Tag;
+
+    su2double harmonic, omega, amp;
+    amp = 2.0;
+    omega = 25.0;
+
+    /*--- Retrieve values from the config file ---*/
+
+    deltaT = config->GetDelta_UnstTimeND();
+    Lref   = config->GetLength_Ref();
+
+    /*--- Compute delta time based on physical time step ---*/
+
+    time_new = iter*deltaT;
+    if (iter == 0) time_old = time_new;
+    else time_old = (iter-1)*deltaT;
+
+
+    /*--- Set the harmonic. Add the higher harmonics later ---*/
+    harmonic = sin(omega*time_new) - sin(omega*time_old);
+
+    /*--- Store displacement of each node on the rotating surface ---*/
+    /*--- Loop over markers and find the particular marker(s) (surface) to rotate ---*/
+
+    for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+        if (config->GetMarker_All_Moving(iMarker) != YES) continue;
+
+        Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+
+        for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+
+            Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
+
+            if ((Marker_Tag != Moving_Tag) || (config->GetKind_SurfaceMovement(jMarker) != DEFORMING)) {
+                continue;
+            }
+
+            for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+
+                /*--- Index and coordinates of the current point ---*/
+
+                iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+                Coord  = geometry->nodes->GetCoord(iPoint);
+
+                /*--- Compute delta change in the position in the x, y, & z directions. ---*/
+                for (iDim = 0; iDim < 3; iDim++){
+                    VarCoord[iDim] = (amp*harmonic*Coord[iDim] - harmonic*Coord[iDim])/Lref;
+                }
+
+                /*--- Set node displacement for volume deformation ---*/
+                for (iDim = 0; iDim < nDim; iDim++)
+                    VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + VarCoord[iDim];
+
+                nodes->SetBound_Disp(iPoint, VarCoordAbs);
+            }
+        }
+    }
+
 }

@@ -206,4 +206,12 @@ public:
    */
   void Surface_Translating(CGeometry *geometry, CConfig *config, unsigned long iter);
 
+  /*!
+   * \brief Pulsating sphere definition for deforming mesh
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] iter - Current time iteration number
+   */
+  void PulsatingSphere(CGeometry *geometry, CConfig *config, unsigned long iter);
+
 };
