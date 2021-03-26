@@ -216,6 +216,7 @@ private:
   nMarker_Load_Sine,              /*!< \brief Number of load surface markers defined by magnitude and direction. */
   nMarker_FlowLoad,               /*!< \brief Number of load surface markers. */
   nMarker_Internal,               /*!< \brief Number of internal flow markers. */
+  nMarker_PreCICE,
   nMarker_All,                    /*!< \brief Total number of markers using the grid information. */
   nMarker_Max,                    /*!< \brief Max number of number of markers using the grid information. */
   nMarker_CfgFile;                /*!< \brief Total number of markers using the config file (note that in
@@ -265,6 +266,7 @@ private:
   *Marker_Load_Sine,              /*!< \brief Sine-wave loaded markers defined in cartesian coordinates. */
   *Marker_FlowLoad,               /*!< \brief Flow Load markers. */
   *Marker_Internal,               /*!< \brief Internal flow markers. */
+  *Marker_PreCICE,
   *Marker_All_TagBound;           /*!< \brief Global index for markers using grid information. */
 
   su2double *Exhaust_Temperature_Target;     /*!< \brief Specified total temperatures for nacelle boundaries. */
@@ -692,6 +694,7 @@ private:
   *Marker_All_Moving,                /*!< \brief Global index for moving surfaces using the grid information. */
   *Marker_All_Deform_Mesh,           /*!< \brief Global index for deformable markers at the boundary. */
   *Marker_All_Deform_Mesh_Sym_Plane, /*!< \brief Global index for markers with symmetric deformations. */
+  *Marker_All_PreCICE,
   *Marker_All_Fluid_Load,            /*!< \brief Global index for markers in which the flow load is computed/employed. */
   *Marker_All_PyCustom,              /*!< \brief Global index for Python customizable surfaces using the grid information. */
   *Marker_All_Designing,             /*!< \brief Global index for moving using the grid information. */
@@ -707,6 +710,7 @@ private:
   *Marker_CfgFile_Moving,             /*!< \brief Global index for moving surfaces using the config information. */
   *Marker_CfgFile_Deform_Mesh,        /*!< \brief Global index for deformable markers at the boundary. */
   *Marker_CfgFile_Deform_Mesh_Sym_Plane, /*!< \brief Global index for markers with symmetric deformations. */
+  *Marker_CfgFile_PreCICE,
   *Marker_CfgFile_Fluid_Load,         /*!< \brief Global index for markers in which the flow load is computed/employed. */
   *Marker_CfgFile_PyCustom,           /*!< \brief Global index for Python customizable surfaces using the config information. */
   *Marker_CfgFile_DV,                 /*!< \brief Global index for design variable markers using the config information. */
@@ -1030,6 +1034,15 @@ private:
   su2double *Wall_Emissivity;          /*!< \brief Emissivity of the wall. */
   bool Radiation;                      /*!< \brief Determines if a radiation model is incorporated. */
   su2double CFL_Rad;                   /*!< \brief CFL Number for the radiation solver. */
+
+  /*--- PreCICE ---*/
+  bool precice_usage;	                     /*!< \brief Usage of preCICE for FSI simulations */
+  bool precice_verbosityLevel_high;	         /*!< \brief Verbosity level of the preCICE adapter for FSI simulations */
+  bool precice_loadRamping;                  /*!< \brief Usage of preCICE load ramping procedure for FSI simulations */
+  unsigned long precice_loadRampingDuration; /*!< \brief Number of physical time steps for which the load ramping procedure is applied */
+  unsigned long precice_numberWetSurfaces;   /*!< \brief Number of different wet surfaces */
+  string preciceConfigFileName;	             /*!< \brief Name of the preCICE configuration file */
+  string preciceWetSurfaceMarkerName;	     /*!< \brief Name of the wet surface marker (from the mesh file) that the preCICE adapter will use for identification of the wet surface */
 
   array<su2double,5> default_cfl_adapt;  /*!< \brief Default CFL adapt param array for the COption class. */
   su2double vel_init[3], /*!< \brief initial velocity array for the COption class. */
@@ -2811,6 +2824,12 @@ public:
    */
   unsigned short GetnMarker_Euler(void) const { return nMarker_Euler; }
 
+
+
+  unsigned short GetnMarker_PreCICE(void) const { return nMarker_PreCICE; }
+
+
+
   /*!
    * \brief Get the number of symmetry boundary markers.
    * \return Number of symmetry boundary markers.
@@ -3266,6 +3285,12 @@ public:
    */
   void SetMarker_All_Deform_Mesh_Sym_Plane(unsigned short val_marker, unsigned short val_deform) { Marker_All_Deform_Mesh_Sym_Plane[val_marker] = val_deform; }
 
+
+
+  void SetMarker_All_PreCICE(unsigned short val_marker, unsigned short val_precice) { Marker_All_Deform_Mesh[val_marker] = val_precice; }
+
+
+
   /*!
    * \brief Set if a in marker <i>val_marker</i> the flow load will be computed/employed.
    * \param[in] val_marker - Index of the marker in which we are interested.
@@ -3409,6 +3434,11 @@ public:
    * \return 0 or 1 depending if the marker belongs to the DEFORM_MESH_SYM_PLANE subset.
    */
   unsigned short GetMarker_All_Deform_Mesh_Sym_Plane(unsigned short val_marker) const { return Marker_All_Deform_Mesh_Sym_Plane[val_marker]; }
+
+
+
+  unsigned short GetMarker_All_PreCICE(unsigned short val_marker) const { return Marker_All_PreCICE[val_marker]; }
+
 
   /*!
    * \brief Get whether marker <i>val_marker</i> is a Fluid_Load marker
@@ -5966,6 +5996,13 @@ public:
    */
   unsigned short GetMarker_CfgFile_Deform_Mesh_Sym_Plane(string val_marker) const;
 
+
+
+
+  unsigned short GetMarker_CfgFile_PreCICE(string val_marker) const;
+
+
+
   /*!
    * \brief Get the Fluid_Load information from the config definition for the marker <i>val_marker</i>.
    * \return Fluid_Load information of the boundary in the config information for the marker <i>val_marker</i>.
@@ -6304,6 +6341,12 @@ public:
    * \return Internal index for a DEFORM_MESH_SYM_PLANE boundary <i>val_marker</i>.
    */
   unsigned short GetMarker_Deform_Mesh_Sym_Plane(string val_marker) const;
+
+
+
+  unsigned short GetMarker_PreCICE(string val_marker) const;
+
+
 
   /*!
    * \brief Get the internal index for a Fluid_Load boundary <i>val_marker</i>.
@@ -9264,5 +9307,48 @@ public:
    * \return -1 if (on this mpi rank) the zone defined by config is not part of the interface.
    */
   short FindInterfaceMarker(unsigned short iInterface) const;
+
+  /*--- PreCICE ---*/
+  /*!
+   * \brief Check if the simulation we are running uses preCICE for FSI
+   * \return True if we use preCICE, false otherwise.
+   */
+  bool GetpreCICE_Usage(void) const { return precice_usage; }
+
+  /*!
+   * \brief Check if the verbosity level of the preCICE adapter is high or not
+   * \return True if verbosity level is high, false otherwise.
+   */
+  bool GetpreCICE_VerbosityLevel_High(void) const { return precice_verbosityLevel_high; }
+
+  /*!
+   * \brief Check if the load ramping procedure of the preCICE adapter is activated or not
+   * \return True if the procedure is applied, false otherwise.
+   */
+  bool GetpreCICE_LoadRamping(void) const { return precice_loadRamping; }
+
+  /*!
+   * \brief Get the name of the preCICE configuration file
+   * \return preCICE configuration file name as string
+   */
+  string GetpreCICE_ConfigFileName(void) const { return preciceConfigFileName; }
+
+  /*!
+   * \brief Get the name of the wet surface marker used in the mesh file
+   * \return Wet surface marker name as string
+   */
+  string GetpreCICE_WetSurfaceMarkerName(void) const { return preciceWetSurfaceMarkerName; }
+
+  /*!
+   * \brief Get the number of physical time steps for which the load ramping is applied
+   * \return Number of corresponding time steps for which the force vector is continuously increased up to the original value
+   */
+  unsigned long GetpreCICE_LoadRampingDuration(void) const { return precice_loadRampingDuration; }
+
+  /*!
+   * \brief Get the number of wet surfaces in the FSI simulation
+   * \return Number of wet surfaces
+   */
+  unsigned long GetpreCICE_NumberWetSurfaces(void) const { return precice_numberWetSurfaces; }
 
 };

@@ -43,6 +43,10 @@ class CInterpolator;
 class CIteration;
 class COutput;
 
+//preCICE
+//This forward declaration of the Precice class is necessary to avoid a cyclic inclusion issue
+class Precice;
+
 /*!
  * \class CDriver
  * \brief Parent class for driving an iteration of a single or multi-zone problem.
@@ -98,6 +102,12 @@ protected:
   interpolator_container;                       /*!< \brief Definition of the interpolation method between non-matching discretizations of the interface. */
   CInterface ***interface_container;            /*!< \brief Definition of the interface of information and physics. */
   bool dry_run;                                 /*!< \brief Flag if SU2_CFD was started as dry-run via "SU2_CFD -d <config>.cfg" */
+
+  //preCICE
+  bool precice_usage;
+  Precice *precice;
+  double *max_precice_dt, *dt;
+
 
 public:
 

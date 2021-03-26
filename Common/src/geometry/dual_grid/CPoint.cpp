@@ -107,7 +107,7 @@ void CPoint::FullAllocation(unsigned short imesh, const CConfig *config) {
     GridVel.resize(npoint,nDim) = su2double(0.0);
 
     /*--- Grid velocity gradients are needed for the continuous adjoint. ---*/
-    if (config->GetContinuous_Adjoint())
+    if (config->GetContinuous_Adjoint() || config->GetpreCICE_Usage())
       GridVel_Grad.resize(npoint,nDim,nDim,0.0);
 
     /*--- Structures for storing old node coordinates for computing grid

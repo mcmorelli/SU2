@@ -698,6 +698,7 @@ enum ENUM_SURFACEMOVEMENT {
   AEROELASTIC_RIGID_MOTION = 4,  /*!< \brief Simulation with rotation and aeroelastic motion. */
   EXTERNAL = 6,                  /*!< \brief Simulation with external motion. */
   EXTERNAL_ROTATION = 7,         /*!< \brief Simulation with external rotation motion. */
+  PRECICE = 8
 };
 static const MapType<string, ENUM_SURFACEMOVEMENT> SurfaceMovement_Map = {
   MakePair("DEFORMING", DEFORMING)
@@ -706,6 +707,7 @@ static const MapType<string, ENUM_SURFACEMOVEMENT> SurfaceMovement_Map = {
   MakePair("AEROELASTIC", AEROELASTIC)
   MakePair("EXTERNAL", EXTERNAL)
   MakePair("EXTERNAL_ROTATION", EXTERNAL_ROTATION)
+  MakePair("PRECICE", PRECICE)
 };
 
 /*!

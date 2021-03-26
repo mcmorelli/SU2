@@ -51,6 +51,8 @@ if omp
   omp_dep = dependency('openmp', language:'cpp')
 endif
 
+precice_dep = dependency('libprecice')
+
 if get_option('enable-autodiff') or get_option('enable-directdiff')
   codi_dep = [declare_dependency(include_directories: 'externals/codi/include')]
   codi_rev_args = '-DCODI_REVERSE_TYPE'
@@ -105,6 +107,8 @@ if omp
   # add OpenMP dependency
   su2_deps += omp_dep
 endif
+
+  su2_deps += precice_dep
 
 if get_option('enable-tecio')
   subdir('externals/tecio')

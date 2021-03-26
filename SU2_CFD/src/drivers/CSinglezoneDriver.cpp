@@ -30,6 +30,8 @@
 #include "../../include/output/COutput.hpp"
 #include "../../include/iteration/CIteration.hpp"
 
+#include "../../include/precice.hpp"
+
 CSinglezoneDriver::CSinglezoneDriver(char* confFile,
                        unsigned short val_nZone,
                        SU2_Comm MPICommunicator) : CDriver(confFile,
@@ -52,7 +54,17 @@ void CSinglezoneDriver::StartSolver() {
 
   config_container[ZONE_0]->Set_StartTime(StartTime);
 
-  /*--- Main external loop of the solver. Runs for the number of time steps required. ---*/
+
+  //preCICE
+  precice_usage = config_container[ZONE_0]->GetpreCICE_Usage();
+  if (precice_usage) {
+    precice = new Precice(config_container[ZONE_0]->GetpreCICE_ConfigFileName(), rank, size, geometry_container[ZONE_0], solver_container[ZONE_0], config_container, grid_movement[ZONE_0]);
+    dt = new double(config_container[ZONE_0]->GetDelta_UnstTimeND());
+    max_precice_dt = new double(precice->initialize());
+  }
+
+
+    /*--- Main external loop of the solver. Runs for the number of time steps required. ---*/
 
   if (rank == MASTER_NODE)
     cout << endl <<"------------------------------ Begin Solver -----------------------------" << endl;
@@ -69,7 +81,21 @@ void CSinglezoneDriver::StartSolver() {
     TimeIter = config_container[ZONE_0]->GetRestart_Iter();
 
   /*--- Run the problem until the number of time iterations required is reached. ---*/
-  while ( TimeIter < config_container[ZONE_0]->GetnTime_Iter() ) {
+  while ( ( TimeIter < config_container[ZONE_0]->GetnTime_Iter() && precice_usage && precice->isCouplingOngoing() ) || ( TimeIter < config_container[ZONE_0]->GetnTime_Iter() && !precice_usage ) ) {
+
+
+    //preCICE implicit coupling: saveOldState()
+    if(precice_usage && precice->isActionRequired(precice->getCowic())){
+      precice->saveOldState(&StopCalc, dt);
+    }
+
+    //preCICE - set minimal time step size as new time step size in SU2
+    if(precice_usage){
+      dt = min(max_precice_dt,dt);
+      config_container[ZONE_0]->SetDelta_UnstTimeND(*dt);
+    }
+
+
 
     /*--- Perform some preprocessing before starting the time-step simulation. ---*/
 
@@ -91,9 +117,27 @@ void CSinglezoneDriver::StartSolver() {
 
     Monitor(TimeIter);
 
-    /*--- Output the solution in files. ---*/
 
-    Output(TimeIter);
+    //preCICE - Advancing
+    if(precice_usage){
+      *max_precice_dt = precice->advance(*dt);
+    }
+
+    //preCICE implicit coupling: reloadOldState()
+    bool suppress_output_by_preCICE = false;
+    if(precice_usage && precice->isActionRequired(precice->getCoric())){
+      //Stay at the same iteration number if preCICE is not converged and reload to the state before the current iteration
+      TimeIter--;
+      precice->reloadOldState(&StopCalc, dt);
+      suppress_output_by_preCICE = true;
+    }
+
+
+    /*--- Output the solution in files. ---*/
+    if (!suppress_output_by_preCICE){
+      Output(TimeIter);
+    }
+
 
     /*--- If the convergence criteria has been met, terminate the simulation. ---*/
 

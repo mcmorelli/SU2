@@ -89,6 +89,8 @@
 
 #include "../../../Common/include/parallelization/omp_structure.hpp"
 
+#include "../../include/precice.hpp"
+
 #include <cassert>
 
 #ifdef VTUNEPROF
@@ -579,6 +581,22 @@ void CDriver::Postprocessing() {
     cout << "-------------------------------------------------------------------------" << endl;
     cout << endl;
   }
+
+
+  //preCICE - Finalize
+  if(precice_usage){
+    precice->finalize();
+    if (dt != NULL) {
+      delete dt;
+    }
+    if (max_precice_dt != NULL) {
+      delete max_precice_dt;
+    }
+    if (precice != NULL) {
+      delete precice;
+    }
+  }
+
 
   /*--- Exit the solver cleanly ---*/
 
