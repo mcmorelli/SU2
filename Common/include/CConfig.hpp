@@ -3287,7 +3287,7 @@ public:
 
 
 
-  void SetMarker_All_PreCICE(unsigned short val_marker, unsigned short val_precice) { Marker_All_Deform_Mesh[val_marker] = val_precice; }
+  void SetMarker_All_PreCICE(unsigned short val_marker, unsigned short val_precice) { Marker_All_PreCICE[val_marker] = val_precice; }
 
 
 
@@ -6346,6 +6346,8 @@ public:
 
   unsigned short GetMarker_PreCICE(string val_marker) const;
 
+
+  string GetMarker_PreCICE_TagBound(unsigned short val_marker) const { return Marker_PreCICE[val_marker]; }
 
 
   /*!
