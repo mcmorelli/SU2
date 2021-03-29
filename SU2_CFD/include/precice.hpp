@@ -40,7 +40,7 @@ private:
   int *forceID;
   int *displDeltaID;
   double *forces;
-  double *displacements;
+  //double *displacements;
   double *displacementDeltas;
   const string& coric;
   const string& cowic;

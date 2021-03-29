@@ -6,164 +6,124 @@
 
 #include "../include/precice.hpp"
 
-Precice::Precice( const string& preciceConfigurationFileName, int solverProcessIndex, int solverProcessSize, CGeometry*** geometry_container, CSolver**** solver_container, CConfig** config_container, CVolumetricMovement** grid_movement )
-:
-solverProcessIndex(solverProcessIndex),
-solverProcessSize(solverProcessSize),
-solverInterface( "SU2_CFD", preciceConfigurationFileName, solverProcessIndex, solverProcessSize ),
-nDim(geometry_container[ZONE_0][MESH_0]->GetnDim()),
-geometry_container(geometry_container),
-solver_container(solver_container),
-config_container(config_container),
-grid_movement(grid_movement),
-vertexIDs(NULL),
-forceID(NULL),
-displDeltaID(NULL),
-forces(NULL),
-displacementDeltas(NULL),
-//For implicit coupling
-coric(precice::constants::actionReadIterationCheckpoint()),
-cowic(precice::constants::actionWriteIterationCheckpoint()),
-processWorkingOnWetSurface(true),
-verbosityLevel_high(config_container[ZONE_0]->GetpreCICE_VerbosityLevel_High()),
-//globalNumberWetSurfaces(config_container[ZONE_0]->GetpreCICE_NumberWetSurfaces()),
-localNumberWetSurfaces(0),
-//Get value (= index) of the marker corresponding to the wet surface
-//It is implied, that only one marker is used for the entire wet surface, even if it is split into parts
-valueMarkerWet(NULL),
-vertexSize(NULL),
-indexMarkerWetMappingLocalToGlobal(NULL),
-//Variables for implicit coupling
-nPoint(geometry_container[ZONE_0][MESH_0]->GetnPoint()),
-nVar(solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetnVar()),
-Coord_Saved(NULL),
-Coord_n_Saved(NULL),
-Coord_n1_Saved(NULL),
-Coord_p1_Saved(NULL),
-GridVel_Saved(NULL),
-GridVel_Grad_Saved(NULL),
-dt_savedState(0),
-StopCalc_savedState(false),
-solution_Saved(NULL),
-solution_time_n_Saved(NULL),
-solution_time_n1_Saved(NULL)
-{
-  Coord_Saved = new double*[nPoint];
-  Coord_n_Saved = new double*[nPoint];
-  Coord_n1_Saved = new double*[nPoint];
-  Coord_p1_Saved = new double*[nPoint];
-  GridVel_Saved = new double*[nPoint];
-  GridVel_Grad_Saved = new double**[nPoint];
-  solution_Saved = new double*[nPoint];
-  solution_time_n_Saved = new double*[nPoint];
-  solution_time_n1_Saved = new double*[nPoint];
-  for (int iPoint = 0; iPoint < nPoint; iPoint++) {
-    Coord_Saved[iPoint] = new double[nDim];
-    Coord_n_Saved[iPoint] = new double[nDim];
-    Coord_n1_Saved[iPoint] = new double[nDim];
-    Coord_p1_Saved[iPoint] = new double[nDim];
-    GridVel_Saved[iPoint] = new double[nDim];
-    GridVel_Grad_Saved[iPoint] = new double*[nDim];
-    for (int iDim = 0; iDim < nDim; iDim++) {
-      GridVel_Grad_Saved[iPoint][iDim] = new double[nDim];
+Precice::Precice(
+        const string &preciceConfigurationFileName,
+        int solverProcessIndex,
+        int solverProcessSize,
+        CGeometry ***geometry_container,
+        CSolver ****solver_container,
+        CConfig **config_container,
+        CVolumetricMovement **grid_movement)
+        :
+        solverProcessIndex(solverProcessIndex),
+        solverProcessSize(solverProcessSize),
+        solverInterface("SU2_CFD", preciceConfigurationFileName, solverProcessIndex, solverProcessSize),
+        geometry_container(geometry_container),
+        solver_container(solver_container),
+        config_container(config_container),
+        grid_movement(grid_movement),
+        //For implicit coupling
+        coric(precice::constants::actionReadIterationCheckpoint()),
+        cowic(precice::constants::actionWriteIterationCheckpoint()) {
+
+    nDim = geometry_container[ZONE_0][MESH_0]->GetnDim();
+    verbosityLevel_high = config_container[ZONE_0]->GetpreCICE_VerbosityLevel_High();
+    nPoint = geometry_container[ZONE_0][MESH_0]->GetnPoint();
+    nVar = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetnVar();
+    globalNumberWetSurfaces = config_container[ZONE_0]->GetnMarker_PreCICE();
+
+    localNumberWetSurfaces = 0;
+    dt_savedState = 0;
+
+    StopCalc_savedState = false;
+
+    vertexIDs = nullptr;
+    forceID = nullptr;
+    displDeltaID = nullptr;
+    forces = nullptr;
+    displacementDeltas = nullptr;
+    processWorkingOnWetSurface = true;
+    valueMarkerWet = nullptr;
+    vertexSize = nullptr;
+    indexMarkerWetMappingLocalToGlobal = nullptr;
+
+    Coord_Saved = nullptr;
+    Coord_n_Saved = nullptr;
+    Coord_n1_Saved = nullptr;
+    Coord_p1_Saved = nullptr;
+    GridVel_Saved = nullptr;
+    GridVel_Grad_Saved = nullptr;
+    solution_Saved = nullptr;
+    solution_time_n_Saved = nullptr;
+    solution_time_n1_Saved = nullptr;
+
+    Coord_Saved = new double *[nPoint];
+    Coord_n_Saved = new double *[nPoint];
+    Coord_n1_Saved = new double *[nPoint];
+    Coord_p1_Saved = new double *[nPoint];
+    GridVel_Saved = new double *[nPoint];
+    GridVel_Grad_Saved = new double **[nPoint];
+    solution_Saved = new double *[nPoint];
+    solution_time_n_Saved = new double *[nPoint];
+    solution_time_n1_Saved = new double *[nPoint];
+    for (int iPoint = 0; iPoint < nPoint; iPoint++) {
+        Coord_Saved[iPoint] = new double[nDim];
+        Coord_n_Saved[iPoint] = new double[nDim];
+        Coord_n1_Saved[iPoint] = new double[nDim];
+        Coord_p1_Saved[iPoint] = new double[nDim];
+        GridVel_Saved[iPoint] = new double[nDim];
+        GridVel_Grad_Saved[iPoint] = new double *[nDim];
+        for (int iDim = 0; iDim < nDim; iDim++) {
+            GridVel_Grad_Saved[iPoint][iDim] = new double[nDim];
+        }
+        solution_Saved[iPoint] = new double[nVar];
+        solution_time_n_Saved[iPoint] = new double[nVar];
+        solution_time_n1_Saved[iPoint] = new double[nVar];
     }
-    solution_Saved[iPoint] = new double[nVar];
-    solution_time_n_Saved[iPoint] = new double[nVar];
-    solution_time_n1_Saved[iPoint] = new double[nVar];
-  }
 }
 
 Precice::~Precice(void) {
-  for (int i = 0; i < localNumberWetSurfaces; i++) {
-    if (vertexIDs[i] != NULL) {
-        delete [] vertexIDs[i];
-    }
-  }
-  if (vertexIDs != NULL) {
-    delete [] vertexIDs;
-  }
-  if (forceID != NULL) {
-    delete [] forceID;
-  }
-  if (displDeltaID != NULL) {
-    delete [] displDeltaID;
-  }
-  if (valueMarkerWet != NULL) {
-    delete [] valueMarkerWet;
-  }
-  if (vertexSize != NULL) {
-    delete [] vertexSize;
-  }
-  if (indexMarkerWetMappingLocalToGlobal != NULL) {
-    delete [] indexMarkerWetMappingLocalToGlobal;
-  }
 
-  for (int iPoint = 0; iPoint < nPoint; iPoint++) {
-    if (Coord_Saved[iPoint] != NULL) {
-        delete [] Coord_Saved[iPoint];
+    for (int i = 0; i < localNumberWetSurfaces; i++) {
+        delete[] vertexIDs[i];
     }
-    if (Coord_n_Saved[iPoint] != NULL) {
-        delete [] Coord_n_Saved[iPoint];
+    delete[] vertexIDs;
+
+    for (int iPoint = 0; iPoint < nPoint; iPoint++) {
+        delete[] Coord_Saved[iPoint];
+        delete[] Coord_n_Saved[iPoint];
+        delete[] Coord_n1_Saved[iPoint];
+        delete[] Coord_p1_Saved[iPoint];
+        delete[] GridVel_Saved[iPoint];
+        delete[] solution_Saved[iPoint];
+        delete[] solution_time_n_Saved[iPoint];
+        delete[] solution_time_n1_Saved[iPoint];
     }
-    if (Coord_n1_Saved[iPoint] != NULL) {
-        delete [] Coord_n1_Saved[iPoint];
+    delete[] Coord_Saved;
+    delete[] Coord_n_Saved;
+    delete[] Coord_n1_Saved;
+    delete[] Coord_p1_Saved;
+    delete[] GridVel_Saved;
+    delete[] solution_Saved;
+    delete[] solution_time_n_Saved;
+    delete[] solution_time_n1_Saved;
+
+    for (int iPoint = 0; iPoint < nPoint; iPoint++) {
+        for (int iDim = 0; iDim < nDim; iDim++) {
+            delete[] GridVel_Grad_Saved[iPoint][iDim];
+        }
+        delete[] GridVel_Grad_Saved[iPoint];
     }
-    if (Coord_p1_Saved[iPoint] != NULL) {
-        delete [] Coord_p1_Saved[iPoint];
-    }
-    if (GridVel_Saved[iPoint] != NULL) {
-        delete [] GridVel_Saved[iPoint];
-    }
-    for (int iDim = 0; iDim < nDim; iDim++) {
-      if (GridVel_Grad_Saved[iPoint][iDim] != NULL) {
-        delete [] GridVel_Grad_Saved[iPoint][iDim];
-      }
-    }
-    if (GridVel_Grad_Saved[iPoint] != NULL) {
-        delete [] GridVel_Grad_Saved[iPoint];
-    }
-    if (solution_Saved[iPoint] != NULL) {
-        delete [] solution_Saved[iPoint];
-    }
-    if (solution_time_n_Saved[iPoint] != NULL) {
-        delete [] solution_time_n_Saved[iPoint];
-    }
-    if (solution_time_n1_Saved[iPoint] != NULL) {
-        delete [] solution_time_n1_Saved[iPoint];
-    }
-  }
-  if (Coord_Saved != NULL) {
-    delete [] Coord_Saved;
-  }
-  if (Coord_n_Saved != NULL) {
-    delete [] Coord_n_Saved;
-  }
-  if (Coord_n1_Saved != NULL) {
-    delete [] Coord_n1_Saved;
-  }
-  if (Coord_p1_Saved != NULL) {
-    delete [] Coord_p1_Saved;
-  }
-  if (GridVel_Saved != NULL) {
-    delete [] GridVel_Saved;
-  }
-  if (GridVel_Grad_Saved != NULL) {
-    delete [] GridVel_Grad_Saved;
-  }
-  if (solution_Saved != NULL) {
-    delete [] solution_Saved;
-  }
-  if (solution_time_n_Saved != NULL) {
-    delete [] solution_time_n_Saved;
-  }
-  if (solution_time_n1_Saved != NULL) {
-    delete [] solution_time_n1_Saved;
-  }
+    delete[] GridVel_Grad_Saved;
+
+    delete[] forceID;
+    delete[] displDeltaID;
+    delete[] valueMarkerWet;
+    delete[] vertexSize;
+    delete[] indexMarkerWetMappingLocalToGlobal;
 }
 
 double Precice::initialize(){
-
-  globalNumberWetSurfaces = config_container[ZONE_0]->GetnMarker_PreCICE();
 
   if (verbosityLevel_high) {
     cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Initializing preCICE..." << endl;
@@ -280,14 +240,14 @@ double Precice::initialize(){
         }
       }
       if (!flag) {
-        solverInterface.setMeshVertices(meshID[i], 0, NULL, NULL);
+        solverInterface.setMeshVertices(meshID[i], 0, nullptr, nullptr);
         forceID[i] = solverInterface.getDataID("Forces" + to_string(i), meshID[i]);
         displDeltaID[i] = solverInterface.getDataID("DisplacementDeltas" + to_string(i), meshID[i]);
       }
     }
   } else {
     for (int i = 0; i < globalNumberWetSurfaces; i++) {
-      solverInterface.setMeshVertices(meshID[i], 0, NULL, NULL);
+      solverInterface.setMeshVertices(meshID[i], 0, nullptr, nullptr);
       forceID[i] = solverInterface.getDataID("Forces" + to_string(i), meshID[i]);
       displDeltaID[i] = solverInterface.getDataID("DisplacementDeltas" + to_string(i), meshID[i]);
     }
@@ -303,7 +263,7 @@ double Precice::initialize(){
   if (verbosityLevel_high) {
     cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": ...done initializing preCICE!" << endl;
   }
-  if (meshID != NULL) {
+  if (meshID != nullptr) {
     delete [] meshID;
   }
   return precice_dt;
@@ -358,7 +318,7 @@ double Precice::advance( double computedTimestepLength ){
       double Area;
       double Pn = 0.0;  /*--- denotes pressure at a node ---*/
       double Pinf = 0.0;  /*--- denotes environmental (farfield) pressure ---*/
-      double** Grad_PrimVar = NULL; /*--- denotes (u.A. velocity) gradients needed for computation of viscous forces ---*/
+      double** Grad_PrimVar = nullptr; /*--- denotes (u.A. velocity) gradients needed for computation of viscous forces ---*/
       double Viscosity = 0.0;
       double Tau[3][3];
       double TauElem[3];
