@@ -34,22 +34,22 @@ private:
 
   //General preCICE-related Variables
   int nDim;
-  unsigned long *vertexSize; //Number of nodes at the wet surface (for each wet surface)
-  short *valueMarkerWet; //List of wet surface marker values
-  int **vertexIDs;
-  int *forceID;
-  int *displDeltaID;
-  int *meshID;
-  double *forces;
+  unsigned long *nVerticesOfMarker; //Number of nodes at the wet surface (for each wet surface)
+  short *Marker; //List of wet surface marker values
+  int **VertexID;
+  int *ForceID;
+  int *DisplacementDeltaID;
+  int *MeshID;
+  double *Forces;
   //double *displacements;
-  double *displacementDeltas;
+  double *DisplacementDeltas;
   const string& coric;
   const string& cowic;
-  bool processWorkingOnWetSurface;
+  bool workingProcess;
   bool verbosityLevel_high;
-  unsigned long globalNumberWetSurfaces; //Number of wet surfaces of the whole problem
-  unsigned long localNumberWetSurfaces; //Number of wet surfaces, which this process is actually working on
-  short *indexMarkerWetMappingLocalToGlobal; //Mapping relations for wet surfaces
+  unsigned long nGlobalMarkers; //Number of wet surfaces of the whole problem
+  unsigned long nLocalMarkers; //Number of wet surfaces, which this process is actually working on
+  short *localToGlobalMapping; //Mapping relations for wet surfaces
 
   //Variables for storing the old state to reset to in case of an implicit simulation
   int nPoint; //Overall number of nodes of the problem
