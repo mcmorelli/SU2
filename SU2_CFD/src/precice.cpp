@@ -40,6 +40,7 @@ Precice::Precice(
     vertexIDs = nullptr;
     forceID = nullptr;
     displDeltaID = nullptr;
+    meshID = nullptr;
     forces = nullptr;
     displacementDeltas = nullptr;
     processWorkingOnWetSurface = true;
@@ -121,33 +122,62 @@ Precice::~Precice(void) {
     delete[] valueMarkerWet;
     delete[] vertexSize;
     delete[] indexMarkerWetMappingLocalToGlobal;
+    delete[] meshID;
 }
 
 double Precice::initialize(){
+
+  /*--- preCICE timestep size ---*/
+  double precice_dt;
 
   if (verbosityLevel_high) {
     cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Initializing preCICE..." << endl;
   }
 
-  //Checking for dimensional consistency of SU2 and preCICE - Exit if not consistent
-  if(solverInterface.getDimensions() != geometry_container[ZONE_0][MESH_0]->GetnDim()){
-    cout << "Dimensions of SU2 and preCICE are not equal! Now exiting..." << endl;
-    exit(EXIT_FAILURE);
-  }
-  int *meshID;
-  //Checking for number of wet surfaces - Exit if not cat least one wet surface defined
-  if(globalNumberWetSurfaces < 1){
-    cout << "There must be at least one wet surface! Now exiting..." << endl;
-    exit(EXIT_FAILURE);
-  } else {
-    meshID = new int[globalNumberWetSurfaces];
-    forceID = new int[globalNumberWetSurfaces];
-    displDeltaID = new int[globalNumberWetSurfaces];
-    for (int i = 0; i < globalNumberWetSurfaces; i++) {
-      //Get preCICE meshIDs
-      meshID[i] = solverInterface.getMeshID("SU2_Mesh" + to_string(i));
+  CheckDimensionalConsistency();
+
+  GetPreciceMeshID();
+
+  SetnLocalPreciceMarkers();
+
+  CheckWorkingProcess();
+
+  SetMarkerMapping();
+
+  SetMeshVertices();
+
+  precice_dt = SetTimeStep();
+
+  return precice_dt;
+}
+
+void Precice::CheckDimensionalConsistency() {
+
+    //Checking for dimensional consistency of SU2 and preCICE - Exit if not consistent
+    if(solverInterface.getDimensions() != geometry_container[ZONE_0][MESH_0]->GetnDim()){
+        cout << "Dimensions of SU2 and preCICE are not equal! Now exiting..." << endl;
+        exit(EXIT_FAILURE);
     }
-  }
+}
+
+void Precice::GetPreciceMeshID() {
+
+    //Checking for number of wet surfaces - Exit if not cat least one wet surface defined
+    if(globalNumberWetSurfaces < 1){
+        cout << "There must be at least one wet surface! Now exiting..." << endl;
+        exit(EXIT_FAILURE);
+    } else {
+        meshID = new int[globalNumberWetSurfaces];
+        forceID = new int[globalNumberWetSurfaces];
+        displDeltaID = new int[globalNumberWetSurfaces];
+        for (int i = 0; i < globalNumberWetSurfaces; i++) {
+            //Get preCICE meshIDs
+            meshID[i] = solverInterface.getMeshID("SU2_Mesh" + to_string(i));
+        }
+    }
+}
+
+void Precice::SetnLocalPreciceMarkers() {
 
     unsigned short iMarker, jMarker;
     string Marker_Tag, PreCICE_Tag;
@@ -169,10 +199,20 @@ double Precice::initialize(){
             localNumberWetSurfaces++;
         }
     }
+}
+
+void Precice::CheckWorkingProcess() {
+
     if (localNumberWetSurfaces < 1) {
         cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Does not work on the wet surface at all." << endl;
         processWorkingOnWetSurface = false;
     }
+}
+
+void Precice::SetMarkerMapping() {
+
+    unsigned short iMarker, jMarker;
+    string Marker_Tag, PreCICE_Tag;
 
     if (processWorkingOnWetSurface) {
 
@@ -202,78 +242,95 @@ double Precice::initialize(){
         }
         vertexIDs = new int*[localNumberWetSurfaces];
     }
-
-
-  if (processWorkingOnWetSurface) {
-    vertexSize = new unsigned long[localNumberWetSurfaces];
-    for (int i = 0; i < localNumberWetSurfaces; i++) {
-      vertexSize[i] = geometry_container[ZONE_0][MESH_0]->nVertex[valueMarkerWet[i]];
-
-      unsigned long iNode;  /*--- variable for storing the node indices - one at the time ---*/
-      su2double* Coord = nullptr;
-
-      auto* coords = new double [vertexSize[i]*nDim];
-
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        iNode = geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNode();
-        Coord = geometry_container[ZONE_0][MESH_0]->nodes->GetCoord(iNode);
-
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          coords[iVertex*nDim + iDim] = Coord[iDim];
-        }
-      }
-
-      //preCICE internal
-      vertexIDs[i] = new int[vertexSize[i]];
-      solverInterface.setMeshVertices(meshID[indexMarkerWetMappingLocalToGlobal[i]], vertexSize[i], coords, vertexIDs[i]);
-      forceID[indexMarkerWetMappingLocalToGlobal[i]] = solverInterface.getDataID("Forces" + to_string(indexMarkerWetMappingLocalToGlobal[i]), meshID[indexMarkerWetMappingLocalToGlobal[i]]);
-      displDeltaID[indexMarkerWetMappingLocalToGlobal[i]] = solverInterface.getDataID("DisplacementDeltas" + to_string(indexMarkerWetMappingLocalToGlobal[i]), meshID[indexMarkerWetMappingLocalToGlobal[i]]);
-
-      delete [] coords;
-
-    }
-    for (int i = 0; i < globalNumberWetSurfaces; i++) {
-      bool flag = false;
-      for (int j = 0; j < localNumberWetSurfaces; j++) {
-        if (indexMarkerWetMappingLocalToGlobal[j] == i) {
-          flag = true;
-        }
-      }
-      if (!flag) {
-        solverInterface.setMeshVertices(meshID[i], 0, nullptr, nullptr);
-        forceID[i] = solverInterface.getDataID("Forces" + to_string(i), meshID[i]);
-        displDeltaID[i] = solverInterface.getDataID("DisplacementDeltas" + to_string(i), meshID[i]);
-      }
-    }
-  } else {
-    for (int i = 0; i < globalNumberWetSurfaces; i++) {
-      solverInterface.setMeshVertices(meshID[i], 0, nullptr, nullptr);
-      forceID[i] = solverInterface.getDataID("Forces" + to_string(i), meshID[i]);
-      displDeltaID[i] = solverInterface.getDataID("DisplacementDeltas" + to_string(i), meshID[i]);
-    }
-  }
-
-  if (verbosityLevel_high) {
-    cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": There is grid movement (expected: 1): " << config_container[ZONE_0]->GetGrid_Movement() << endl; /*--- for debugging purposes ---*/
-//    cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Kind of grid movement (expected: 13): " << config_container[ZONE_0]->GetKind_GridMovement(ZONE_0) << endl;  /*--- for debugging purposes ---*/
-  }
-
-  double precice_dt;  /*--- preCICE timestep size ---*/
-  precice_dt = solverInterface.initialize();
-  if (verbosityLevel_high) {
-    cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": ...done initializing preCICE!" << endl;
-  }
-  if (meshID != nullptr) {
-    delete [] meshID;
-  }
-  return precice_dt;
 }
 
-double Precice::advance( double computedTimestepLength ){
-  if (processWorkingOnWetSurface) {
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE..." << endl;
+void Precice::SetMeshVertices() {
+
+    if (processWorkingOnWetSurface) {
+        vertexSize = new unsigned long[localNumberWetSurfaces];
+        for (int i = 0; i < localNumberWetSurfaces; i++) {
+            vertexSize[i] = geometry_container[ZONE_0][MESH_0]->nVertex[valueMarkerWet[i]];
+
+            unsigned long iNode;  /*--- variable for storing the node indices - one at the time ---*/
+            su2double* Coord = nullptr;
+
+            auto* coords = new double [vertexSize[i]*nDim];
+
+            for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+                iNode = geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNode();
+                Coord = geometry_container[ZONE_0][MESH_0]->nodes->GetCoord(iNode);
+
+                for (int iDim = 0; iDim < nDim; iDim++) {
+                    coords[iVertex*nDim + iDim] = Coord[iDim];
+                }
+            }
+
+            //preCICE internal
+            vertexIDs[i] = new int[vertexSize[i]];
+            solverInterface.setMeshVertices(meshID[indexMarkerWetMappingLocalToGlobal[i]], vertexSize[i], coords, vertexIDs[i]);
+            forceID[indexMarkerWetMappingLocalToGlobal[i]] = solverInterface.getDataID("Forces" + to_string(indexMarkerWetMappingLocalToGlobal[i]), meshID[indexMarkerWetMappingLocalToGlobal[i]]);
+            displDeltaID[indexMarkerWetMappingLocalToGlobal[i]] = solverInterface.getDataID("DisplacementDeltas" + to_string(indexMarkerWetMappingLocalToGlobal[i]), meshID[indexMarkerWetMappingLocalToGlobal[i]]);
+
+            delete [] coords;
+
+        }
+        for (int i = 0; i < globalNumberWetSurfaces; i++) {
+            bool flag = false;
+            for (int j = 0; j < localNumberWetSurfaces; j++) {
+                if (indexMarkerWetMappingLocalToGlobal[j] == i) {
+                    flag = true;
+                }
+            }
+            if (!flag) {
+                solverInterface.setMeshVertices(meshID[i], 0, nullptr, nullptr);
+                forceID[i] = solverInterface.getDataID("Forces" + to_string(i), meshID[i]);
+                displDeltaID[i] = solverInterface.getDataID("DisplacementDeltas" + to_string(i), meshID[i]);
+            }
+        }
+    } else {
+        for (int i = 0; i < globalNumberWetSurfaces; i++) {
+            solverInterface.setMeshVertices(meshID[i], 0, nullptr, nullptr);
+            forceID[i] = solverInterface.getDataID("Forces" + to_string(i), meshID[i]);
+            displDeltaID[i] = solverInterface.getDataID("DisplacementDeltas" + to_string(i), meshID[i]);
+        }
     }
+}
+
+double Precice::SetTimeStep() {
+
+    double time_step;
+
+    time_step = solverInterface.initialize();
+    if (verbosityLevel_high) {
+        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": ...done initializing preCICE!" << endl;
+    }
+
+    return time_step;
+}
+
+double Precice::advance(double computedTimestepLength) {
+
+    double max_precice_dt;
+
+    if (processWorkingOnWetSurface) {
+
+        ComputeForces();
+
+        //3. Advance solverInterface
+        max_precice_dt = ComputeMaxTimeStep(computedTimestepLength);
+
+        SetDisplacements();
+
+        return max_precice_dt;
+    } else {
+        //3. Advance solverInterface
+        max_precice_dt = ComputeMaxTimeStep(computedTimestepLength);
+
+        return max_precice_dt;
+    }
+}
+
+void Precice::ComputeForces() {
 
     //Get physical simulation information
     bool incompressible = (config_container[ZONE_0]->GetKind_Regime() == INCOMPRESSIBLE);
@@ -288,258 +345,236 @@ double Precice::advance( double computedTimestepLength ){
     double Velocity2_ND = 0.0;  /*--- denotes squared non-dimensional velocity ---*/
     //Compute squared values
     for (int iDim = 0; iDim < nDim; iDim++){
-      Velocity2_Real += Velocity_Real[iDim]*Velocity_Real[iDim];
-      Velocity2_ND += Velocity_ND[iDim]*Velocity_ND[iDim];
+        Velocity2_Real += Velocity_Real[iDim]*Velocity_Real[iDim];
+        Velocity2_ND += Velocity_ND[iDim]*Velocity_ND[iDim];
     }
     //Compute factor for redimensionalizing forces
     double factorForces = Density_Real*Velocity2_Real/(Density_ND*Velocity2_ND);
     if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Factor for (non-/re-)dimensionalization of forces: " << factorForces << endl;  /*--- for debugging purposes ---*/
+        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Factor for (non-/re-)dimensionalization of forces: " << factorForces << endl;  /*--- for debugging purposes ---*/
     }
 
     for (int i = 0; i < localNumberWetSurfaces; i++) {
-      if (verbosityLevel_high) {
-        //1. Compute forces
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Computing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
-      }
-
-      auto* nodeVertex = new unsigned long [vertexSize[i]];
-
-      auto** normalsVertex = new double* [vertexSize[i]];
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
-        normalsVertex[iVertex] = new double [nDim];
-      }
-
-      auto** normalsVertex_Unit = new double* [vertexSize[i]];
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
-        normalsVertex_Unit[iVertex] = new double [nDim];
-      }
-
-      double Area;
-      double Pn = 0.0;  /*--- denotes pressure at a node ---*/
-      double Pinf = 0.0;  /*--- denotes environmental (farfield) pressure ---*/
-      double** Grad_PrimVar = nullptr; /*--- denotes (u.A. velocity) gradients needed for computation of viscous forces ---*/
-      double Viscosity = 0.0;
-      double Tau[3][3];
-      double TauElem[3];
-      //double forces_su2[vertexSize[i]][nDim];  /*--- forces will be stored such, before converting to simple array ---*/
-      auto** forces_su2 = new double* [vertexSize[i]];
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
-        forces_su2[iVertex] = new double [nDim];
-      }
-
-      /*--- Loop over vertices of coupled boundary ---*/
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-
-        //Get node number (= index) to vertex (= node)
-        nodeVertex[iVertex] = geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNode(); /*--- Store all nodes (indices) in a vector ---*/
-        // Get normal vector
-        for (int iDim = 0; iDim < nDim; iDim++){
-          normalsVertex[iVertex][iDim] = (geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNormal())[iDim];
-        }
-        // Unit normals
-        Area = 0.0;
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          Area += normalsVertex[iVertex][iDim]*normalsVertex[iVertex][iDim];
-        }
-        Area = sqrt(Area);
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          normalsVertex_Unit[iVertex][iDim] = normalsVertex[iVertex][iDim]/Area;
-        }
-        // Get the values of pressure and viscosity
-        CVariable* flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
-        Pinf = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetPressure_Inf();
-        Pn = flow_nodes->GetPressure(nodeVertex[iVertex]);
-
-        if (viscous_flow){
-          Viscosity = flow_nodes->GetLaminarViscosity(nodeVertex[iVertex]);
-          Grad_PrimVar = flow_nodes->GetGradient_Primitive(nodeVertex[iVertex]);
-
-        }
-
-        // Calculate the forces_su2 in the nodes for the inviscid term --> Units of force (non-dimensional).
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          forces_su2[iVertex][iDim] = -(Pn-Pinf)*normalsVertex[iVertex][iDim];
-        }
-        // Calculate the forces_su2 in the nodes for the viscous term
-        if (viscous_flow){
-          // Divergence of the velocity
-          double div_vel = 0.0;
-          for (int iDim = 0; iDim < nDim; iDim++){
-            div_vel += Grad_PrimVar[iDim+1][iDim];
-          }
-          if (incompressible){
-            div_vel = 0.0;  /*--- incompressible flow is divergence-free ---*/
-          }
-          for (int iDim = 0; iDim < nDim; iDim++) {
-            for (int jDim = 0 ; jDim < nDim; jDim++) {
-              // Dirac delta
-              double Delta = 0.0;
-              if (iDim == jDim){
-                Delta = 1.0;
-              }
-              // Viscous stress
-              Tau[iDim][jDim] = Viscosity*(Grad_PrimVar[jDim+1][iDim] + Grad_PrimVar[iDim+1][jDim]) -
-              2.0/3.0*Viscosity*div_vel*Delta;
-              // Add Viscous component in the forces_su2 vector --> Units of force (non-dimensional).
-              forces_su2[iVertex][iDim] += Tau[iDim][jDim]*normalsVertex[iVertex][jDim];
-            }
-          }
-        }
-        // Rescale forces_su2 to SI units
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          forces_su2[iVertex][iDim] = forces_su2[iVertex][iDim]*factorForces;
-        }
-      }
-      //convert forces_su2 into forces
-      forces = new double[vertexSize[i]*nDim];
-
-
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          //Do not write forces for duplicate nodes! -> Check wether the color of the node matches the MPI-rank of this process. Only write forces, if node originally belongs to this process.
-          if (geometry_container[ZONE_0][MESH_0]->nodes->GetColor(iVertex) == solverProcessIndex) {
-            forces[iVertex*nDim + iDim] = forces_su2[iVertex][iDim];
-          }
-          else{
-            forces[iVertex*nDim + iDim] = 0;
-          }
-        }
-      }
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done computing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << endl;
-      }
-
-      //2. Write forces
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Writing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
-      }
-      //Load Ramping functionality: Reduce force vector before transferring by a ramping factor, which increases with the number of elapsed time steps; Achtung: ExtIter beginnt bei 0 (ohne Restart) und bei einem Restart (Startlösung) nicht bei 0, sondern bei der Startiterationsnummer
-      if (config_container[ZONE_0]->GetpreCICE_LoadRamping() && ((config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter()) < config_container[ZONE_0]->GetpreCICE_LoadRampingDuration())) {
         if (verbosityLevel_high) {
-          cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Load ramping factor in preCICE: " << config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter() + 1 << "/" << config_container[ZONE_0]->GetpreCICE_LoadRampingDuration() << endl;
+            //1. Compute forces
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Computing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
         }
-        *forces = *forces * ((config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter()) + 1) / config_container[ZONE_0]->GetpreCICE_LoadRampingDuration();
-      }
-      solverInterface.writeBlockVectorData(forceID[indexMarkerWetMappingLocalToGlobal[i]], vertexSize[i], vertexIDs[i], forces);
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done writing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "." << endl;
-      }
 
-      delete [] forces;
+        auto* nodeVertex = new unsigned long [vertexSize[i]];
 
-      delete [] nodeVertex;
+        auto** normalsVertex = new double* [vertexSize[i]];
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
+            normalsVertex[iVertex] = new double [nDim];
+        }
 
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        delete [] normalsVertex[iVertex];
-      }
-      delete [] normalsVertex;
+        auto** normalsVertex_Unit = new double* [vertexSize[i]];
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
+            normalsVertex_Unit[iVertex] = new double [nDim];
+        }
 
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        delete [] normalsVertex_Unit[iVertex];
-      }
-      delete [] normalsVertex_Unit;
+        double Area;
+        double Pn = 0.0;  /*--- denotes pressure at a node ---*/
+        double Pinf = 0.0;  /*--- denotes environmental (farfield) pressure ---*/
+        double** Grad_PrimVar = nullptr; /*--- denotes (u.A. velocity) gradients needed for computation of viscous forces ---*/
+        double Viscosity = 0.0;
+        double Tau[3][3];
+        double TauElem[3];
+        //double forces_su2[vertexSize[i]][nDim];  /*--- forces will be stored such, before converting to simple array ---*/
+        auto** forces_su2 = new double* [vertexSize[i]];
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
+            forces_su2[iVertex] = new double [nDim];
+        }
 
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        delete [] forces_su2[iVertex];
-      }
-      delete [] forces_su2;
+        /*--- Loop over vertices of coupled boundary ---*/
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+
+            //Get node number (= index) to vertex (= node)
+            nodeVertex[iVertex] = geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNode(); /*--- Store all nodes (indices) in a vector ---*/
+            // Get normal vector
+            for (int iDim = 0; iDim < nDim; iDim++){
+                normalsVertex[iVertex][iDim] = (geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNormal())[iDim];
+            }
+            // Unit normals
+            Area = 0.0;
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                Area += normalsVertex[iVertex][iDim]*normalsVertex[iVertex][iDim];
+            }
+            Area = sqrt(Area);
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                normalsVertex_Unit[iVertex][iDim] = normalsVertex[iVertex][iDim]/Area;
+            }
+            // Get the values of pressure and viscosity
+            CVariable* flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
+            Pinf = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetPressure_Inf();
+            Pn = flow_nodes->GetPressure(nodeVertex[iVertex]);
+
+            if (viscous_flow){
+                Viscosity = flow_nodes->GetLaminarViscosity(nodeVertex[iVertex]);
+                Grad_PrimVar = flow_nodes->GetGradient_Primitive(nodeVertex[iVertex]);
+
+            }
+
+            // Calculate the forces_su2 in the nodes for the inviscid term --> Units of force (non-dimensional).
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                forces_su2[iVertex][iDim] = -(Pn-Pinf)*normalsVertex[iVertex][iDim];
+            }
+            // Calculate the forces_su2 in the nodes for the viscous term
+            if (viscous_flow){
+                // Divergence of the velocity
+                double div_vel = 0.0;
+                for (int iDim = 0; iDim < nDim; iDim++){
+                    div_vel += Grad_PrimVar[iDim+1][iDim];
+                }
+                if (incompressible){
+                    div_vel = 0.0;  /*--- incompressible flow is divergence-free ---*/
+                }
+                for (int iDim = 0; iDim < nDim; iDim++) {
+                    for (int jDim = 0 ; jDim < nDim; jDim++) {
+                        // Dirac delta
+                        double Delta = 0.0;
+                        if (iDim == jDim){
+                            Delta = 1.0;
+                        }
+                        // Viscous stress
+                        Tau[iDim][jDim] = Viscosity*(Grad_PrimVar[jDim+1][iDim] + Grad_PrimVar[iDim+1][jDim]) -
+                                          2.0/3.0*Viscosity*div_vel*Delta;
+                        // Add Viscous component in the forces_su2 vector --> Units of force (non-dimensional).
+                        forces_su2[iVertex][iDim] += Tau[iDim][jDim]*normalsVertex[iVertex][jDim];
+                    }
+                }
+            }
+            // Rescale forces_su2 to SI units
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                forces_su2[iVertex][iDim] = forces_su2[iVertex][iDim]*factorForces;
+            }
+        }
+        //convert forces_su2 into forces
+        forces = new double[vertexSize[i]*nDim];
+
+
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                //Do not write forces for duplicate nodes! -> Check wether the color of the node matches the MPI-rank of this process. Only write forces, if node originally belongs to this process.
+                if (geometry_container[ZONE_0][MESH_0]->nodes->GetColor(iVertex) == solverProcessIndex) {
+                    forces[iVertex*nDim + iDim] = forces_su2[iVertex][iDim];
+                }
+                else{
+                    forces[iVertex*nDim + iDim] = 0;
+                }
+            }
+        }
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done computing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << endl;
+        }
+
+        //2. Write forces
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Writing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
+        }
+        //Load Ramping functionality: Reduce force vector before transferring by a ramping factor, which increases with the number of elapsed time steps; Achtung: ExtIter beginnt bei 0 (ohne Restart) und bei einem Restart (Startlösung) nicht bei 0, sondern bei der Startiterationsnummer
+        if (config_container[ZONE_0]->GetpreCICE_LoadRamping() && ((config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter()) < config_container[ZONE_0]->GetpreCICE_LoadRampingDuration())) {
+            if (verbosityLevel_high) {
+                cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Load ramping factor in preCICE: " << config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter() + 1 << "/" << config_container[ZONE_0]->GetpreCICE_LoadRampingDuration() << endl;
+            }
+            *forces = *forces * ((config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter()) + 1) / config_container[ZONE_0]->GetpreCICE_LoadRampingDuration();
+        }
+        solverInterface.writeBlockVectorData(forceID[indexMarkerWetMappingLocalToGlobal[i]], vertexSize[i], vertexIDs[i], forces);
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done writing forces for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "." << endl;
+        }
+
+        delete [] forces;
+
+        delete [] nodeVertex;
+
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+            delete [] normalsVertex[iVertex];
+        }
+        delete [] normalsVertex;
+
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+            delete [] normalsVertex_Unit[iVertex];
+        }
+        delete [] normalsVertex_Unit;
+
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+            delete [] forces_su2[iVertex];
+        }
+        delete [] forces_su2;
 
     }
+}
 
-    //3. Advance solverInterface
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Advancing SolverInterface..." << endl;
-    }
-    double max_precice_dt;
-    max_precice_dt = solverInterface.advance( computedTimestepLength );
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done advancing SolverInterface." << endl;
-    }
+void Precice::SetDisplacements() {
 
-    // displacements = new double[vertexSize*nDim]; //TODO: Delete later
     for (int i = 0; i < localNumberWetSurfaces; i++) {
-      //4. Read displacements/displacementDeltas
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Reading displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
-      }
-
-      //double displacementDeltas_su2[vertexSize[i]][nDim]; /*--- displacementDeltas will be stored such, before converting to simple array ---*/
-      auto** displacementDeltas_su2 = new double* [vertexSize[i]];
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
-        displacementDeltas_su2[iVertex] = new double [nDim];
-      }
-
-      displacementDeltas = new double[vertexSize[i]*nDim];
-
-
-      solverInterface.readBlockVectorData(displDeltaID[indexMarkerWetMappingLocalToGlobal[i]], vertexSize[i], vertexIDs[i], displacementDeltas);
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done reading displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "." << endl;
-      }
-
-      //cout << "displacementDeltas" << endl;
-      //5. Set displacements/displacementDeltas
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Setting displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
-      }
-      //convert displacementDeltas into displacementDeltas_su2
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          displacementDeltas_su2[iVertex][iDim] = displacementDeltas[iVertex*nDim + iDim];
-        }
-      }
-
-      unsigned long iNode;
-      //CVariable* nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
-      CVariable* nodes = solver_container[ZONE_0][MESH_0][MESH_SOL]->GetNodes();
-      su2double VarCoordAbs[3] = {0.0};
-
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-
-        iNode = geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNode();
-
-        for (int iDim = 0; iDim < nDim; iDim++) {
-          VarCoordAbs[iDim] = nodes->GetBound_Disp(iNode, iDim) + displacementDeltas_su2[iVertex][iDim];
+        //4. Read displacements/displacementDeltas
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Reading displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
         }
 
-        nodes->SetBound_Disp(iNode, VarCoordAbs);
-      }
+        //double displacementDeltas_su2[vertexSize[i]][nDim]; /*--- displacementDeltas will be stored such, before converting to simple array ---*/
+        auto** displacementDeltas_su2 = new double* [vertexSize[i]];
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++){
+            displacementDeltas_su2[iVertex] = new double [nDim];
+        }
 
-      if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done setting displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "." << endl;
-      }
+        displacementDeltas = new double[vertexSize[i]*nDim];
 
-      delete [] displacementDeltas;
+        solverInterface.readBlockVectorData(displDeltaID[indexMarkerWetMappingLocalToGlobal[i]], vertexSize[i], vertexIDs[i], displacementDeltas);
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done reading displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "." << endl;
+        }
 
-      for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
-        delete[] displacementDeltas_su2[iVertex];
-      }
-      delete [] displacementDeltas_su2;
+        //cout << "displacementDeltas" << endl;
+        //5. Set displacements/displacementDeltas
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Setting displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "..." << endl;
+        }
+        //convert displacementDeltas into displacementDeltas_su2
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                displacementDeltas_su2[iVertex][iDim] = displacementDeltas[iVertex*nDim + iDim];
+            }
+        }
+
+        unsigned long iNode;
+        //CVariable* nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
+        CVariable* nodes = solver_container[ZONE_0][MESH_0][MESH_SOL]->GetNodes();
+        su2double VarCoordAbs[3] = {0.0};
+
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+
+            iNode = geometry_container[ZONE_0][MESH_0]->vertex[valueMarkerWet[i]][iVertex]->GetNode();
+
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                VarCoordAbs[iDim] = nodes->GetBound_Disp(iNode, iDim) + displacementDeltas_su2[iVertex][iDim];
+            }
+
+            nodes->SetBound_Disp(iNode, VarCoordAbs);
+        }
+
+        if (verbosityLevel_high) {
+            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done setting displacement deltas for " << config_container[ZONE_0]->GetpreCICE_WetSurfaceMarkerName() << indexMarkerWetMappingLocalToGlobal[i] << "." << endl;
+        }
+
+        delete [] displacementDeltas;
+
+        for (int iVertex = 0; iVertex < vertexSize[i]; iVertex++) {
+            delete[] displacementDeltas_su2[iVertex];
+        }
+        delete [] displacementDeltas_su2;
 
     }
+}
 
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": ...done advancing preCICE!" << endl;
-    }
-    return max_precice_dt;
-  }
-  else{
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE..." << endl;
-    }
-    //3. Advance solverInterface
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: Advancing SolverInterface..." << endl;
-    }
-    double max_precice_dt;
-    max_precice_dt = solverInterface.advance( computedTimestepLength );
-    if (verbosityLevel_high) {
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": Advancing preCICE: ...done advancing SolverInterface." << endl;
-      cout << "Process #" << solverProcessIndex << "/" << solverProcessSize-1 << ": ...done advancing preCICE!" << endl;
-    }
-    return max_precice_dt;
-  }
+double Precice::ComputeMaxTimeStep(double computedTimestepLength) {
+
+    double max_timestep;
+
+    max_timestep = solverInterface.advance( computedTimestepLength );
+
+    return max_timestep;
 }
 
 bool Precice::isCouplingOngoing(){

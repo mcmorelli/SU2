@@ -39,6 +39,7 @@ private:
   int **vertexIDs;
   int *forceID;
   int *displDeltaID;
+  int *meshID;
   double *forces;
   //double *displacements;
   double *displacementDeltas;
@@ -181,5 +182,27 @@ public:
   * - Meshes and data are deallocated.
   */
   void finalize();
+
+private:
+
+  void CheckDimensionalConsistency();
+
+  void GetPreciceMeshID();
+
+  void SetnLocalPreciceMarkers();
+
+  void CheckWorkingProcess();
+
+  void SetMarkerMapping();
+
+  void SetMeshVertices();
+
+  double SetTimeStep();
+
+  void ComputeForces();
+
+  void SetDisplacements();
+
+  double ComputeMaxTimeStep(double computedTimestepLength);
 
 };
