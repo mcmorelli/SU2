@@ -1,7 +1,6 @@
 /*!
 * \file precice.hpp
 * \brief Header of adapter class for coupling SU2 with preCICE for FSI.
-* \author Alexander Rusch
 */
 
 

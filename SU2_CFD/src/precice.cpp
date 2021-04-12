@@ -1,10 +1,12 @@
 /*!
 * \file precice.cpp
 * \brief Adapter class for coupling SU2 with preCICE for FSI.
-* \author Alexander Rusch
 */
 
 #include "../include/precice.hpp"
+#include "../../Common/include/toolboxes/geometry_toolbox.hpp"
+
+// #include "../include/numerics/CNumerics.hpp"
 
 Precice::Precice(
         const string &preciceConfigurationFileName,
@@ -348,28 +350,49 @@ double Precice::advance(double computedTimestepLength) {
 
 void Precice::ComputeForces() {
 
-    //Get physical simulation information
+    /*--- Get physical simulation information ---*/
     bool incompressible = (config_container[ZONE_0]->GetKind_Regime() == INCOMPRESSIBLE);
     bool viscous_flow = ((config_container[ZONE_0]->GetKind_Solver() == NAVIER_STOKES) ||
                          (config_container[ZONE_0]->GetKind_Solver() == RANS));
 
-    //Compute factorForces for redimensionalizing forces ("ND" = Non-Dimensional)
-    double *Velocity_Real = config_container[ZONE_0]->GetVelocity_FreeStream();
-    double Density_Real = config_container[ZONE_0]->GetDensity_FreeStream();
-    double *Velocity_ND = config_container[ZONE_0]->GetVelocity_FreeStreamND();
-    double Density_ND = config_container[ZONE_0]->GetDensity_FreeStreamND();
-    double Velocity2_Real = 0.0;  /*--- denotes squared real velocity ---*/
-    double Velocity2_ND = 0.0;  /*--- denotes squared non-dimensional velocity ---*/
-    //Compute squared values
-    for (int iDim = 0; iDim < nDim; iDim++) {
-        Velocity2_Real += Velocity_Real[iDim] * Velocity_Real[iDim];
-        Velocity2_ND += Velocity_ND[iDim] * Velocity_ND[iDim];
+    auto config = config_container[ZONE_0];
+
+    const bool dynamic_mesh = config->GetGrid_Movement();
+
+    const su2double Gamma = config->GetGamma();
+    const su2double Gas_Constant = config->GetGas_ConstantND();
+    const su2double RefArea      = config->GetRefArea();
+
+    su2double AeroCoeffForceRef;
+
+    /*--- Evaluate reference values for non-dimensionalization.
+      For dynamic meshes, use the motion Mach number as a reference value
+      for computing the force coefficients. Otherwise, use the freestream
+      values, which is the standard convention. ---*/
+    const su2double RefTemp     = config->GetTemperature_FreeStream();
+    const su2double RefDensity  = config->GetDensity_FreeStream();
+
+    su2double *Velocity_Inf = config->GetVelocity_FreeStreamND();
+
+    su2double RefVel2;
+    if (dynamic_mesh) {
+        const su2double Mach2Vel = sqrt(Gamma*Gas_Constant*RefTemp);
+        const su2double Mach_Motion = config->GetMach_Motion();
+        RefVel2 = (Mach_Motion*Mach2Vel)*(Mach_Motion*Mach2Vel);
     }
-    //Compute factor for redimensionalizing forces
-    double factorForces = Density_Real * Velocity2_Real / (Density_ND * Velocity2_ND);
+    else {
+        RefVel2 = 0.0;
+        for(unsigned short iDim=0; iDim<nDim; ++iDim)
+            RefVel2 += Velocity_Inf[iDim]*Velocity_Inf[iDim];
+    }
+
+    AeroCoeffForceRef = 0.5 * RefDensity * RefArea * RefVel2;
+    const su2double factor = 1.0 / AeroCoeffForceRef;
+
+
     if (verbosityLevel_high) {
         cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-             << ": Factor for (non-/re-)dimensionalization of forces: " << factorForces
+             << ": Factor for (non-/re-)dimensionalization of forces: " << factor
              << endl;  /*--- for debugging purposes ---*/
     }
 
@@ -381,103 +404,105 @@ void Precice::ComputeForces() {
                  <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
         }
 
-        auto *NodesArray = new unsigned long[nVerticesOfMarker[i]];
+        unsigned long iNode;
 
-        auto **Normal = new double *[nVerticesOfMarker[i]];
+        su2double *Normal = nullptr;
+        su2double UnitNormal[3] = {0.0};
+
+        su2double Area;
+        su2double Pressure, Pressure_Freestream, Viscosity;
+        su2double Tau[3][3], TauElem[3], Grad_Vel[3][3] = {{0.0}};
+
+        auto **Total_Forces = new double *[nVerticesOfMarker[i]];
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            Normal[iVertex] = new double[nDim];
+            Total_Forces[iVertex] = new double[nDim];
         }
 
-        auto **UnitNormal = new double *[nVerticesOfMarker[i]];
+        auto **Pressure_Forces = new double *[nVerticesOfMarker[i]];
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            UnitNormal[iVertex] = new double[nDim];
+            Pressure_Forces[iVertex] = new double[nDim];
         }
 
-        double Area;
-        double Pn = 0.0;  /*--- denotes pressure at a node ---*/
-        double Pinf = 0.0;  /*--- denotes environmental (farfield) pressure ---*/
-        double **Grad_PrimVar = nullptr; /*--- denotes (u.A. velocity) gradients needed for computation of viscous forces ---*/
-        double Viscosity = 0.0;
-        double Tau[3][3];
-        double TauElem[3];
-        //double Forces_SU2[nVerticesOfMarker[i]][nDim];  /*--- forces will be stored such, before converting to simple array ---*/
-        auto **Forces_SU2 = new double *[nVerticesOfMarker[i]];
+        auto **Friction_Forces = new double *[nVerticesOfMarker[i]];
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            Forces_SU2[iVertex] = new double[nDim];
+            Friction_Forces[iVertex] = new double[nDim];
         }
+
+
+        CVariable *flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
+        Pressure_Freestream = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetPressure_Inf();
 
         /*--- Loop over vertices of coupled boundary ---*/
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
 
-            //Get node number (= index) to vertex (= node)
-            NodesArray[iVertex] = geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNode(); /*--- Store all nodes (indices) in a vector ---*/
-            // Get normal vector
+            iNode = geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNode();
+
+            Normal = geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNormal();
+            Area = GeometryToolbox::Norm(nDim, Normal);
             for (int iDim = 0; iDim < nDim; iDim++) {
-                Normal[iVertex][iDim] = (geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNormal())[iDim];
+                UnitNormal[iDim] = Normal[iDim] / Area;
             }
-            // Unit normals
-            Area = 0.0;
+
+            /*--- Get the value of pressure on the node ---*/
+            Pressure = flow_nodes->GetPressure(iNode);
+
+            /*--- Calculate the pressure forces computation ---*/
             for (int iDim = 0; iDim < nDim; iDim++) {
-                Area += Normal[iVertex][iDim] * Normal[iVertex][iDim];
+                Pressure_Forces[iVertex][iDim] = -(Pressure - Pressure_Freestream) * Normal[iDim] * factor;
             }
-            Area = sqrt(Area);
-            for (int iDim = 0; iDim < nDim; iDim++) {
-                UnitNormal[iVertex][iDim] = Normal[iVertex][iDim] / Area;
-            }
-            // Get the values of pressure and viscosity
-            CVariable *flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
-            Pinf = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetPressure_Inf();
-            Pn = flow_nodes->GetPressure(NodesArray[iVertex]);
 
             if (viscous_flow) {
-                Viscosity = flow_nodes->GetLaminarViscosity(NodesArray[iVertex]);
-                Grad_PrimVar = flow_nodes->GetGradient_Primitive(NodesArray[iVertex]);
 
-            }
+                /*--- Get the value of viscosity on the node ---*/
+                Viscosity = flow_nodes->GetLaminarViscosity(iNode);
 
-            // Calculate the Forces_SU2 in the nodes for the inviscid term --> Units of force (non-dimensional).
-            for (int iDim = 0; iDim < nDim; iDim++) {
-                Forces_SU2[iVertex][iDim] = -(Pn - Pinf) * Normal[iVertex][iDim];
-            }
-            // Calculate the Forces_SU2 in the nodes for the viscous term
-            if (viscous_flow) {
-                // Divergence of the velocity
-                double div_vel = 0.0;
-                for (int iDim = 0; iDim < nDim; iDim++) {
-                    div_vel += Grad_PrimVar[iDim + 1][iDim];
-                }
-                if (incompressible) {
-                    div_vel = 0.0;  /*--- incompressible flow is divergence-free ---*/
-                }
                 for (int iDim = 0; iDim < nDim; iDim++) {
                     for (int jDim = 0; jDim < nDim; jDim++) {
-                        // Dirac delta
-                        double Delta = 0.0;
-                        if (iDim == jDim) {
-                            Delta = 1.0;
-                        }
-                        // Viscous stress
-                        Tau[iDim][jDim] = Viscosity * (Grad_PrimVar[jDim + 1][iDim] + Grad_PrimVar[iDim + 1][jDim]) -
-                                          2.0 / 3.0 * Viscosity * div_vel * Delta;
-                        // Add Viscous component in the Forces_SU2 vector --> Units of force (non-dimensional).
-                        Forces_SU2[iVertex][iDim] += Tau[iDim][jDim] * Normal[iVertex][jDim];
+                       Grad_Vel[iDim][jDim] = flow_nodes->GetGradient_Primitive(iNode, iDim + 1, jDim);
                     }
                 }
-            }
-            // Rescale Forces_SU2 to SI units
-            for (int iDim = 0; iDim < nDim; iDim++) {
-                Forces_SU2[iVertex][iDim] = Forces_SU2[iVertex][iDim] * factorForces;
-            }
-        }
-        //convert Forces_SU2 into forces
-        Forces = new double[nVerticesOfMarker[i] * nDim];
 
+                /*--- Evaluate Tau ---*/
+                CNumerics::ComputeStressTensor(nDim, Tau, Grad_Vel, Viscosity);
+
+                /*--- If necessary evaluate the QCR contribution to Tau ---*/
+                bool QCR = config->GetQCR();
+                if (QCR) CNumerics::AddQCR(nDim, Grad_Vel, Tau);
+
+                /*--- Project Tau in each surface element ---*/
+                for (int iDim = 0; iDim < nDim; iDim++) {
+                    TauElem[iDim] = 0.0;
+                    for (int jDim = 0; jDim < nDim; jDim++) {
+                        TauElem[iDim] += Tau[iDim][jDim] * UnitNormal[jDim];
+                    }
+                }
+
+                /*--- Force computation ---*/
+                for (int iDim = 0; iDim < nDim; iDim++) {
+                    Friction_Forces[iVertex][iDim] = TauElem[iDim] * Area * factor;
+                }
+            }
+            else {
+                for (int iDim = 0; iDim < nDim; iDim++) {
+                    Friction_Forces[iVertex][iDim] = 0.0;
+                }
+            }
+
+            /*--- Sum the total contribution of the forces ---*/
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                Total_Forces[iVertex][iDim] = Pressure_Forces[iVertex][iDim] + Friction_Forces[iVertex][iDim];
+            }
+
+        }
+
+        /*--- Write the forces to the precice solver interface ---*/
+        Forces = new double[nVerticesOfMarker[i] * nDim];
 
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
             for (int iDim = 0; iDim < nDim; iDim++) {
                 //Do not write forces for duplicate nodes! -> Check wether the color of the node matches the MPI-rank of this process. Only write forces, if node originally belongs to this process.
                 if (geometry_container[ZONE_0][MESH_0]->nodes->GetColor(iVertex) == solverProcessIndex) {
-                    Forces[iVertex * nDim + iDim] = Forces_SU2[iVertex][iDim];
+                    Forces[iVertex * nDim + iDim] = Total_Forces[iVertex][iDim];
                 } else {
                     Forces[iVertex * nDim + iDim] = 0;
                 }
@@ -508,22 +533,20 @@ void Precice::ComputeForces() {
 
         delete[] Forces;
 
-        delete[] NodesArray;
+        for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
+            delete[] Total_Forces[iVertex];
+        }
+        delete[] Total_Forces;
 
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            delete[] Normal[iVertex];
+            delete[] Pressure_Forces[iVertex];
         }
-        delete[] Normal;
+        delete[] Pressure_Forces;
 
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            delete[] UnitNormal[iVertex];
+            delete[] Friction_Forces[iVertex];
         }
-        delete[] UnitNormal;
-
-        for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            delete[] Forces_SU2[iVertex];
-        }
-        delete[] Forces_SU2;
+        delete[] Friction_Forces;
 
     }
 }
