@@ -59,6 +59,7 @@ Precice::Precice(
     solution_Saved = nullptr;
     solution_time_n_Saved = nullptr;
     solution_time_n1_Saved = nullptr;
+    Displacement_Saved = nullptr;
 
     Coord_Saved = new double *[nPoint];
     Coord_n_Saved = new double *[nPoint];
@@ -69,6 +70,7 @@ Precice::Precice(
     solution_Saved = new double *[nPoint];
     solution_time_n_Saved = new double *[nPoint];
     solution_time_n1_Saved = new double *[nPoint];
+    Displacement_Saved = new double *[nPoint];
     for (int iPoint = 0; iPoint < nPoint; iPoint++) {
         Coord_Saved[iPoint] = new double[nDim];
         Coord_n_Saved[iPoint] = new double[nDim];
@@ -82,6 +84,7 @@ Precice::Precice(
         solution_Saved[iPoint] = new double[nVar];
         solution_time_n_Saved[iPoint] = new double[nVar];
         solution_time_n1_Saved[iPoint] = new double[nVar];
+        Displacement_Saved[iPoint] = new double[nDim];
     }
 }
 
@@ -101,6 +104,7 @@ Precice::~Precice(void) {
         delete[] solution_Saved[iPoint];
         delete[] solution_time_n_Saved[iPoint];
         delete[] solution_time_n1_Saved[iPoint];
+        delete[] Displacement_Saved[iPoint];
     }
     delete[] Coord_Saved;
     delete[] Coord_n_Saved;
@@ -110,6 +114,7 @@ Precice::~Precice(void) {
     delete[] solution_Saved;
     delete[] solution_time_n_Saved;
     delete[] solution_time_n1_Saved;
+    delete[] Displacement_Saved;
 
     for (int iPoint = 0; iPoint < nPoint; iPoint++) {
         for (int iDim = 0; iDim < nDim; iDim++) {
@@ -131,11 +136,6 @@ double Precice::initialize() {
 
     // precice timestep size
     double precice_dt;
-
-    if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1 << ": Initializing preCICE..."
-             << endl;
-    }
 
     //Check that both precice and SU2 are of the same dimensions.
     CheckDimensionalConsistency();
@@ -351,58 +351,12 @@ double Precice::advance(double computedTimestepLength) {
 void Precice::ComputeForces() {
 
     /*--- Get physical simulation information ---*/
-    bool incompressible = (config_container[ZONE_0]->GetKind_Regime() == INCOMPRESSIBLE);
     bool viscous_flow = ((config_container[ZONE_0]->GetKind_Solver() == NAVIER_STOKES) ||
                          (config_container[ZONE_0]->GetKind_Solver() == RANS));
 
     auto config = config_container[ZONE_0];
 
-    const bool dynamic_mesh = config->GetGrid_Movement();
-
-    const su2double Gamma = config->GetGamma();
-    const su2double Gas_Constant = config->GetGas_ConstantND();
-    const su2double RefArea      = config->GetRefArea();
-
-    su2double AeroCoeffForceRef;
-
-    /*--- Evaluate reference values for non-dimensionalization.
-      For dynamic meshes, use the motion Mach number as a reference value
-      for computing the force coefficients. Otherwise, use the freestream
-      values, which is the standard convention. ---*/
-    const su2double RefTemp     = config->GetTemperature_FreeStream();
-    const su2double RefDensity  = config->GetDensity_FreeStream();
-
-    su2double *Velocity_Inf = config->GetVelocity_FreeStreamND();
-
-    su2double RefVel2;
-    if (dynamic_mesh) {
-        const su2double Mach2Vel = sqrt(Gamma*Gas_Constant*RefTemp);
-        const su2double Mach_Motion = config->GetMach_Motion();
-        RefVel2 = (Mach_Motion*Mach2Vel)*(Mach_Motion*Mach2Vel);
-    }
-    else {
-        RefVel2 = 0.0;
-        for(unsigned short iDim=0; iDim<nDim; ++iDim)
-            RefVel2 += Velocity_Inf[iDim]*Velocity_Inf[iDim];
-    }
-
-    AeroCoeffForceRef = 0.5 * RefDensity * RefArea * RefVel2;
-    const su2double factor = 1.0 / AeroCoeffForceRef;
-
-
-    if (verbosityLevel_high) {
-        cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-             << ": Factor for (non-/re-)dimensionalization of forces: " << factor
-             << endl;  /*--- for debugging purposes ---*/
-    }
-
     for (int i = 0; i < nLocalMarkers; i++) {
-        if (verbosityLevel_high) {
-            //1. Compute forces
-            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                 << ": Advancing preCICE: Computing forces for "
-                 <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
-        }
 
         unsigned long iNode;
 
@@ -428,7 +382,6 @@ void Precice::ComputeForces() {
             Friction_Forces[iVertex] = new double[nDim];
         }
 
-
         CVariable *flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
         Pressure_Freestream = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetPressure_Inf();
 
@@ -446,9 +399,9 @@ void Precice::ComputeForces() {
             /*--- Get the value of pressure on the node ---*/
             Pressure = flow_nodes->GetPressure(iNode);
 
-            /*--- Calculate the pressure forces computation ---*/
+            /*--- Pressure force computation ---*/
             for (int iDim = 0; iDim < nDim; iDim++) {
-                Pressure_Forces[iVertex][iDim] = -(Pressure - Pressure_Freestream) * Normal[iDim] * factor;
+                Pressure_Forces[iVertex][iDim] = -(Pressure - Pressure_Freestream) * Normal[iDim];
             }
 
             if (viscous_flow) {
@@ -477,9 +430,9 @@ void Precice::ComputeForces() {
                     }
                 }
 
-                /*--- Force computation ---*/
+                /*--- Viscous force computation ---*/
                 for (int iDim = 0; iDim < nDim; iDim++) {
-                    Friction_Forces[iVertex][iDim] = TauElem[iDim] * Area * factor;
+                    Friction_Forces[iVertex][iDim] = TauElem[iDim] * Area;
                 }
             }
             else {
@@ -499,9 +452,10 @@ void Precice::ComputeForces() {
         Forces = new double[nVerticesOfMarker[i] * nDim];
 
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
+            iNode = geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNode();
+
             for (int iDim = 0; iDim < nDim; iDim++) {
-                //Do not write forces for duplicate nodes! -> Check wether the color of the node matches the MPI-rank of this process. Only write forces, if node originally belongs to this process.
-                if (geometry_container[ZONE_0][MESH_0]->nodes->GetColor(iVertex) == solverProcessIndex) {
+                if (geometry_container[ZONE_0][MESH_0]->nodes->GetColor(iNode) == solverProcessIndex) {
                     Forces[iVertex * nDim + iDim] = Total_Forces[iVertex][iDim];
                 } else {
                     Forces[iVertex * nDim + iDim] = 0;
@@ -509,27 +463,8 @@ void Precice::ComputeForces() {
             }
         }
 
-        //Load Ramping functionality: Reduce force vector before transferring by a ramping factor, which increases with the number of elapsed time steps; Achtung: ExtIter beginnt bei 0 (ohne Restart) und bei einem Restart (Startlösung) nicht bei 0, sondern bei der Startiterationsnummer
-        if (config_container[ZONE_0]->GetpreCICE_LoadRamping() &&
-            ((config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter()) <
-             config_container[ZONE_0]->GetpreCICE_LoadRampingDuration())) {
-            if (verbosityLevel_high) {
-                cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                     << ": Load ramping factor in preCICE: "
-                     << config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter() + 1
-                     << "/" << config_container[ZONE_0]->GetpreCICE_LoadRampingDuration() << endl;
-            }
-            *Forces = *Forces *
-                      ((config_container[ZONE_0]->GetnTime_Iter() - config_container[ZONE_0]->GetRestart_Iter()) + 1) /
-                      config_container[ZONE_0]->GetpreCICE_LoadRampingDuration();
-        }
         solverInterface.writeBlockVectorData(ForceID[localToGlobalMapping[i]], nVerticesOfMarker[i], VertexID[i],
                                              Forces);
-        if (verbosityLevel_high) {
-            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                 << ": Advancing preCICE: ...done writing forces for "
-                 <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
-        }
 
         delete[] Forces;
 
@@ -547,79 +482,35 @@ void Precice::ComputeForces() {
             delete[] Friction_Forces[iVertex];
         }
         delete[] Friction_Forces;
-
     }
 }
 
 void Precice::SetDisplacements() {
 
     for (int i = 0; i < nLocalMarkers; i++) {
-        //4. Read displacements/displacementDeltas
-        if (verbosityLevel_high) {
-            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                 << ": Advancing preCICE: Reading displacement deltas for "
-                 <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
-        }
-
-        //double displacementDeltas_su2[nVerticesOfMarker[i]][nDim]; /*--- displacementDeltas will be stored such, before converting to simple array ---*/
-        auto **DisplacementDeltas_SU2 = new double *[nVerticesOfMarker[i]];
-        for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            DisplacementDeltas_SU2[iVertex] = new double[nDim];
-        }
 
         DisplacementDeltas = new double[nVerticesOfMarker[i] * nDim];
 
         solverInterface.readBlockVectorData(DisplacementDeltaID[localToGlobalMapping[i]], nVerticesOfMarker[i],
                                             VertexID[i], DisplacementDeltas);
-        if (verbosityLevel_high) {
-            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                 << ": Advancing preCICE: ...done reading displacement deltas for "
-                 <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
-        }
-
-        //cout << "displacementDeltas" << endl;
-        //5. Set displacements/displacementDeltas
-        if (verbosityLevel_high) {
-            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                 << ": Advancing preCICE: Setting displacement deltas for "
-                 <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
-        }
-        //convert displacementDeltas into displacementDeltas_su2
-        for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            for (int iDim = 0; iDim < nDim; iDim++) {
-                DisplacementDeltas_SU2[iVertex][iDim] = DisplacementDeltas[iVertex * nDim + iDim];
-            }
-        }
 
         unsigned long iNode;
-        //CVariable* nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
         CVariable *nodes = solver_container[ZONE_0][MESH_0][MESH_SOL]->GetNodes();
-        su2double VarCoordAbs[3] = {0.0};
 
         for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
 
+            su2double displacement[3] = {0.0, 0.0, 0.0};
             iNode = geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNode();
 
+            //Get the absolute boundary displacement relative to the initial undeformed mesh
             for (int iDim = 0; iDim < nDim; iDim++) {
-                VarCoordAbs[iDim] = nodes->GetBound_Disp(iNode, iDim) + DisplacementDeltas_SU2[iVertex][iDim];
+                displacement[iDim] = nodes->GetBound_Disp(iNode, iDim) + DisplacementDeltas[iVertex * nDim + iDim];
             }
 
-            nodes->SetBound_Disp(iNode, VarCoordAbs);
-        }
-
-        if (verbosityLevel_high) {
-            cout << "Process #" << solverProcessIndex << "/" << solverProcessSize - 1
-                 << ": Advancing preCICE: ...done setting displacement deltas for "
-                 <<  config_container[ZONE_0]->GetMarker_PreCICE_TagBound(localToGlobalMapping[i]) << endl;
+            nodes->SetBound_Disp(iNode, displacement);
         }
 
         delete[] DisplacementDeltas;
-
-        for (int iVertex = 0; iVertex < nVerticesOfMarker[i]; iVertex++) {
-            delete[] DisplacementDeltas_SU2[iVertex];
-        }
-        delete[] DisplacementDeltas_SU2;
-
     }
 }
 
@@ -651,10 +542,16 @@ const string &Precice::getCoric() {
 void Precice::saveOldState(bool *StopCalc, double *dt) {
 
     CVariable *flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
+    CVariable *mesh_nodes = solver_container[ZONE_0][MESH_0][MESH_SOL]->GetNodes();
     auto geometry_nodes = geometry_container[ZONE_0][MESH_0]->nodes;
     auto &GridVelGrad = geometry_nodes->GetGridVel_Grad();
 
     for (int iPoint = 0; iPoint < nPoint; iPoint++) {
+
+        //Save displacement at the last time step
+        for (int iDim = 0; iDim < nDim; iDim++) {
+            Displacement_Saved[iPoint][iDim] = mesh_nodes->GetBound_Disp(iPoint, iDim);
+        }
 
         //Save solutions at last and current time step
         solution_Saved[iPoint] = flow_nodes->GetSolution(iPoint);
@@ -688,10 +585,15 @@ void Precice::saveOldState(bool *StopCalc, double *dt) {
 void Precice::reloadOldState(bool *StopCalc, double *dt) {
 
     CVariable *flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
+    CVariable *mesh_nodes = solver_container[ZONE_0][MESH_0][MESH_SOL]->GetNodes();
     auto geometry_nodes = geometry_container[ZONE_0][MESH_0]->nodes;
-    auto &gridVelGrad = geometry_nodes->GetGridVel_Grad();
+    auto &GridVelGrad = geometry_nodes->GetGridVel_Grad();
 
     for (int iPoint = 0; iPoint < nPoint; iPoint++) {
+
+        //Reload the displacement at the last time step
+        mesh_nodes->SetBound_Disp(iPoint, Displacement_Saved[iPoint]);
+
         //Reload solutions at last and current time step
         flow_nodes->SetSolution(iPoint, solution_Saved[iPoint]);
         flow_nodes->Set_Solution_time_n(iPoint, solution_time_n_Saved[iPoint]);
@@ -709,10 +611,9 @@ void Precice::reloadOldState(bool *StopCalc, double *dt) {
         //Reload grid velocity gradient
         for (int iDim = 0; iDim < nDim; iDim++) {
             for (int jDim = 0; jDim < nDim; jDim++) {
-                gridVelGrad[iPoint][iDim][jDim] = GridVel_Grad_Saved[iPoint][iDim][jDim];
+                GridVelGrad[iPoint][iDim][jDim] = GridVel_Grad_Saved[iPoint][iDim][jDim];
             }
         }
-
     }
 
     //Reload wether simulation should be stopped after current iteration

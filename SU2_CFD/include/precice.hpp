@@ -58,6 +58,8 @@ private:
   bool StopCalc_savedState;
   double **solution_Saved, **solution_time_n_Saved, **solution_time_n1_Saved;
 
+  double **Displacement_Saved;
+
 
 
 
