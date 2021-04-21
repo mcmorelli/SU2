@@ -95,8 +95,6 @@ void CSinglezoneDriver::StartSolver() {
       config_container[ZONE_0]->SetDelta_UnstTimeND(*dt);
     }
 
-
-
     /*--- Perform some preprocessing before starting the time-step simulation. ---*/
 
     Preprocess(TimeIter);
@@ -125,11 +123,18 @@ void CSinglezoneDriver::StartSolver() {
 
     //preCICE implicit coupling: reloadOldState()
     bool suppress_output_by_preCICE = false;
+    bool initialTimeStep = false;
+
     if(precice_usage && precice->isActionRequired(precice->getCoric())){
+
+      if (TimeIter == config_container[ZONE_0]->GetRestart_Iter() || TimeIter == 0) {
+        initialTimeStep = true;
+      }
+
       //Stay at the same iteration number if preCICE is not converged and reload to the state before the current iteration
-      TimeIter--;
-      precice->reloadOldState(&StopCalc, dt);
+      precice->reloadOldState(&StopCalc, dt, initialTimeStep);
       suppress_output_by_preCICE = true;
+      TimeIter--;
     }
 
 

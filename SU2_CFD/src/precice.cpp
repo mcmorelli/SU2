@@ -502,12 +502,15 @@ void Precice::SetDisplacements() {
             su2double displacement[3] = {0.0, 0.0, 0.0};
             iNode = geometry_container[ZONE_0][MESH_0]->vertex[Marker[i]][iVertex]->GetNode();
 
-            //Get the absolute boundary displacement relative to the initial undeformed mesh
-            for (int iDim = 0; iDim < nDim; iDim++) {
-                displacement[iDim] = nodes->GetBound_Disp(iNode, iDim) + DisplacementDeltas[iVertex * nDim + iDim];
-            }
+            if (geometry_container[ZONE_0][MESH_0]->nodes->GetColor(iNode) == solverProcessIndex) {
 
-            nodes->SetBound_Disp(iNode, displacement);
+                //Get the absolute boundary displacement relative to the initial undeformed mesh
+                for (int iDim = 0; iDim < nDim; iDim++) {
+                    displacement[iDim] = nodes->GetBound_Disp(iNode, iDim) + DisplacementDeltas[iVertex * nDim + iDim];
+                }
+
+                nodes->SetBound_Disp(iNode, displacement);
+            }
         }
 
         delete[] DisplacementDeltas;
@@ -527,8 +530,16 @@ bool Precice::isCouplingOngoing() {
     return solverInterface.isCouplingOngoing();
 }
 
+bool Precice::isTimeWindowComplete() {
+    return solverInterface.isTimeWindowComplete();
+}
+
 bool Precice::isActionRequired(const string &action) {
     return solverInterface.isActionRequired(action);
+}
+
+void Precice::markActionFulfilled(const std::string &action) {
+    solverInterface.markActionFulfilled(action);
 }
 
 const string &Precice::getCowic() {
@@ -553,20 +564,15 @@ void Precice::saveOldState(bool *StopCalc, double *dt) {
             Displacement_Saved[iPoint][iDim] = mesh_nodes->GetBound_Disp(iPoint, iDim);
         }
 
-        //Save solutions at last and current time step
+        //Save the flow solution
         solution_Saved[iPoint] = flow_nodes->GetSolution(iPoint);
         solution_time_n_Saved[iPoint] = flow_nodes->GetSolution_time_n(iPoint);
         solution_time_n1_Saved[iPoint] = flow_nodes->GetSolution_time_n1(iPoint);
 
-        //Save coordinates at last, current and next time step
-        Coord_Saved[iPoint] = geometry_nodes->GetCoord(iPoint);
-        Coord_n_Saved[iPoint] = geometry_nodes->GetCoord_n(iPoint);
-        Coord_n1_Saved[iPoint] = geometry_nodes->GetCoord_n1(iPoint);
-        Coord_p1_Saved[iPoint] = geometry_nodes->GetCoord_p1(iPoint);
+        //Save grid velocity
+        GridVel_Saved[iPoint] = geometry_nodes->GetGridVel(iPoint);
 
         for (int iDim = 0; iDim < nDim; iDim++) {
-            //Save grid velocity
-            GridVel_Saved[iPoint] = geometry_nodes->GetGridVel(iPoint);
             for (int jDim = 0; jDim < nDim; jDim++) {
                 //Save grid velocity gradient
                 GridVel_Grad_Saved[iPoint][iDim][jDim] = GridVelGrad[iPoint][iDim][jDim];
@@ -582,7 +588,7 @@ void Precice::saveOldState(bool *StopCalc, double *dt) {
     solverInterface.markActionFulfilled(cowic);
 }
 
-void Precice::reloadOldState(bool *StopCalc, double *dt) {
+void Precice::reloadOldState(bool *StopCalc, double *dt, bool initialTimeStep) {
 
     CVariable *flow_nodes = solver_container[ZONE_0][MESH_0][FLOW_SOL]->GetNodes();
     CVariable *mesh_nodes = solver_container[ZONE_0][MESH_0][MESH_SOL]->GetNodes();
@@ -594,24 +600,22 @@ void Precice::reloadOldState(bool *StopCalc, double *dt) {
         //Reload the displacement at the last time step
         mesh_nodes->SetBound_Disp(iPoint, Displacement_Saved[iPoint]);
 
-        //Reload solutions at last and current time step
-        flow_nodes->SetSolution(iPoint, solution_Saved[iPoint]);
-        flow_nodes->Set_Solution_time_n(iPoint, solution_time_n_Saved[iPoint]);
-        flow_nodes->Set_Solution_time_n1(iPoint, solution_time_n1_Saved[iPoint]);
+        if (!initialTimeStep) {
+            //Reload the flow solution at the last time step
+            flow_nodes->SetSolution(iPoint, solution_time_n1_Saved[iPoint]);
+            flow_nodes->Set_Solution_time_n(iPoint, solution_time_n1_Saved[iPoint]);
+            flow_nodes->Set_Solution_time_n1(iPoint, solution_time_n1_Saved[iPoint]);
 
-        //Reload coordinates at last, current and next time step
-        geometry_nodes->SetCoord(iPoint, Coord_Saved[iPoint]);
-        geometry_nodes->SetCoord_n(iPoint, Coord_n_Saved[iPoint]);
-        geometry_nodes->SetCoord_n1(iPoint, Coord_n1_Saved[iPoint]);
-        geometry_nodes->SetCoord_p1(iPoint, Coord_p1_Saved[iPoint]);
+            //Reload grid velocity
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                geometry_nodes->SetGridVel(iPoint, iDim, GridVel_Saved[iPoint][iDim]);
+            }
 
-        //Reload grid velocity
-        geometry_nodes->SetGridVel(iPoint, GridVel_Saved[iPoint]);
-
-        //Reload grid velocity gradient
-        for (int iDim = 0; iDim < nDim; iDim++) {
-            for (int jDim = 0; jDim < nDim; jDim++) {
-                GridVelGrad[iPoint][iDim][jDim] = GridVel_Grad_Saved[iPoint][iDim][jDim];
+            //Reload grid velocity gradient
+            for (int iDim = 0; iDim < nDim; iDim++) {
+                for (int jDim = 0; jDim < nDim; jDim++) {
+                    GridVelGrad[iPoint][iDim][jDim] = GridVel_Grad_Saved[iPoint][iDim][jDim];
+                }
             }
         }
     }

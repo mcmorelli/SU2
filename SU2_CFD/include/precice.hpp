@@ -142,6 +142,21 @@ public:
   bool isActionRequired( const string& action );
 
   /*!
+   * \brief tells preCICE that the action is fulfilled. This is a simple safeguard.
+   * If a certain action is required and you did not mark it as fulfilled preCICE will complain.
+   *
+   * \param action
+   */
+  void markActionFulfilled(const string &action);
+
+  /*!
+   * \brief Determine if the coupling timestep has been completed
+   *
+   * \return True if coupling time step complete
+   */
+  bool isTimeWindowComplete();
+
+  /*!
   * \brief Get reference to the string cowic which determines wether an iteration checkpoint needs to be written or not.
   *
   * \return The aforementioned reference to the cowic string.
@@ -169,7 +184,7 @@ public:
   * \param[in] StopCalc - Pointer to the bool StopCalc, which determines wether SU2 finishes computation after the current run or not. This variable must be passed so that its value can be reloaded from the saved state.
   * \param[in] double - Pointer to the double dt, which is the current time step size. This variable must be passed so that its value can be reloaded from the saved state.
   */
-  void reloadOldState( bool *StopCalc, double *dt );
+  void reloadOldState(bool *StopCalc, double *dt, bool initialTimeStep);
 
   /*!
   * \brief Finalizes preCICE.
