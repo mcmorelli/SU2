@@ -2158,6 +2158,8 @@ void F1A::Initialize(CConfig *config, CGeometry *geometry) {
     unsigned long iVertex, iPoint, iMarker, Global_Index;
     unsigned long index = 0;
 
+    unsigned long localnSurfaceNodes = 0;
+
     nDim                = geometry->GetnDim();
     nqSample            = config->GetAcoustic_nqSamples();
     SamplingFreq        = config->GetWrt_Sol_Freq_DualTime();
@@ -2168,9 +2170,21 @@ void F1A::Initialize(CConfig *config, CGeometry *geometry) {
         /* --- Loop over boundary markers to select those on the FWH surface --- */
         if (config->GetMarker_All_KindBC(iMarker) == ACOUSTIC_BOUNDARY) {
             /*--- Get the total number of FWH surface nodes ---*/
-            nSurfaceNodes += geometry->nVertex[iMarker];
+            //nSurfaceNodes += geometry->nVertex[iMarker]; //does not work in parallel
+
+            for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+                iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+                /*--- Check if the node belongs to the domain (i.e., not a halo node) ---*/
+                if (geometry->nodes->GetDomain(iPoint)) {
+                    localnSurfaceNodes++;
+                }
+            }
+
         }
     }
+
+    SU2_MPI::Allreduce(&localnSurfaceNodes, &nSurfaceNodes, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
+    cout << "rank " << rank << ", localnSurfaceNodes " << localnSurfaceNodes << ", nSurfaceNodes " << nSurfaceNodes << endl;
 
     globalIndexContainer = new unsigned long[nSurfaceNodes];
 
@@ -2286,137 +2300,164 @@ void F1A::Initialize(CConfig *config, CGeometry *geometry) {
 void F1A::Read_TECPLOT_ASCII( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample){
 
 #ifdef HAVE_MPI
-    int rank, nProcessor;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &nProcessor);
 #endif
 
-    ifstream surface_file;
-    string text_line, useless, Tag;
-    string filename = "surface_flow";
-    string ext = ".dat";
+    if (rank == MASTER_NODE) {
 
-    int iVar;
-    int nFields;
-    int x_index = 0, y_index = 1, z_index = 2;
-    int density_index = 3;
-    int momentum_x_index = 4, momentum_y_index = 5, momentum_z_index = 6;
-    int grid_vel_x_index = 9, grid_vel_y_index = 10, grid_vel_z_index = 11;
-    int pressure_index = 12;
+        ifstream surface_file;
+        string text_line, useless, Tag;
+        string filename = "surface_flow";
+        string ext = ".dat";
 
-    bool moving_surface = false;
+        int iVar;
+        int nFields;
+        int x_index = 0, y_index = 1, z_index = 2;
+        int density_index = 3;
+        int momentum_x_index = 4, momentum_y_index = 5, momentum_z_index = 6;
+        int grid_vel_x_index = 9, grid_vel_y_index = 10, grid_vel_z_index = 11;
+        int pressure_index = 12;
+        int normal_x_index = 13, normal_y_index = 14, normal_z_index = 15;
 
-    vector<string> fields;
-    fields.clear();
+        bool moving_surface = false;
+        bool normals_output = false;
 
-    passivedouble *Aux_DataStruct = nullptr;
+        vector<string> fields;
+        fields.clear();
 
-    unsigned long ExtIter = (iSample+iLocSample)*SamplingFreq + config->GetRestart_Iter();
+        passivedouble *Aux_DataStruct = nullptr;
 
-    filename = config->GetFilename(filename, ext, ExtIter);
+        unsigned long ExtIter = (iSample + iLocSample) * SamplingFreq + config->GetRestart_Iter();
 
-    /*--- Open the restart file ---*/
+        filename = config->GetFilename(filename, ext, ExtIter);
 
-    surface_file.open(filename.data(), ios::in);
+        /*--- Open the restart file ---*/
 
-    /*--- In case there is no restart file ---*/
+        surface_file.open(filename.data(), ios::in);
 
-    if (surface_file.fail()) {
-        cout << ("TECPLOT ASCII surface file ") + string(filename) + string(" not found.\n") ;
-        exit(EXIT_FAILURE);
-    }
-    else{
-        cout << "Reading Tecplot surface file " << filename << endl;
-    }
+        /*--- In case there is no restart file ---*/
 
-    /*--- Identify the number of fields (and names) in the restart file ---*/
-
-    getline (surface_file, useless);
-    getline (surface_file, text_line);
-
-    char delimiter = ',';
-    fields = PrintingToolbox::split(text_line, delimiter);
-
-    //at index 0 trim tecplot field: VARIABLES =
-    fields[0].erase(0, 12);
-
-    for (auto & field : fields){
-        PrintingToolbox::trim(field);
-        field.erase(remove(field.begin(), field.end(), '"'), field.end());
-    }
-
-    for (int iField = 0; iField < fields.size(); iField++){
-        if (fields[iField] == "x") x_index = iField;
-        if (fields[iField] == "y") y_index = iField;
-        if (fields[iField] == "z") z_index = iField;
-        if (fields[iField] == "Density") density_index = iField;
-        if (fields[iField] == "Pressure") pressure_index = iField;
-        if (fields[iField] == "Momentum_x") momentum_x_index = iField;
-        if (fields[iField] == "Momentum_y") momentum_y_index = iField;
-        if (fields[iField] == "Momentum_z") momentum_z_index = iField;
-        if (fields[iField] == "Grid_Velocity_y") grid_vel_y_index = iField;
-        if (fields[iField] == "Grid_Velocity_z") grid_vel_z_index = iField;
-        if (fields[iField] == "Grid_Velocity_x") {
-            grid_vel_x_index = iField;
-            moving_surface = true;
+        if (surface_file.fail()) {
+            cout << ("TECPLOT ASCII surface file ") + string(filename) + string(" not found.\n");
+            exit(EXIT_FAILURE);
+        } else {
+            cout << "Reading Tecplot surface file " << filename << endl;
         }
-    }
 
-    /*--- Set the number of variables, one per field in the restart file  ---*/
+        /*--- Identify the number of fields (and names) in the restart file ---*/
 
-    nFields = (int)fields.size();
-
-    /*--- Allocate memory for the restart data. ---*/
-
-    Aux_DataStruct = new passivedouble[nFields * nSurfaceNodes];
-
-    //skip line
-    getline (surface_file, useless);
-
-    /*--- Read all lines in the restart file and extract data. ---*/
-
-    for (int iNode = 0; iNode < nSurfaceNodes; iNode++ ) {
-
+        getline(surface_file, useless);
         getline(surface_file, text_line);
 
-        delimiter = '\t';
-        vector<string> point_line = PrintingToolbox::split(text_line, delimiter);
+        char delimiter = ',';
+        fields = PrintingToolbox::split(text_line, delimiter);
 
-        for (iVar = 0; iVar < nFields; iVar++) {
-            Aux_DataStruct[iNode * nFields + iVar] = SU2_TYPE::GetValue(PrintingToolbox::stod(point_line[iVar]));
+        //at index 0 trim tecplot field: VARIABLES =
+        fields[0].erase(0, 12);
+
+        for (auto &field : fields) {
+            PrintingToolbox::trim(field);
+            field.erase(remove(field.begin(), field.end(), '"'), field.end());
         }
+
+        for (int iField = 0; iField < fields.size(); iField++) {
+            if (fields[iField] == "x") x_index = iField;
+            if (fields[iField] == "y") y_index = iField;
+            if (fields[iField] == "z") z_index = iField;
+            if (fields[iField] == "Density") density_index = iField;
+            if (fields[iField] == "Pressure") pressure_index = iField;
+            if (fields[iField] == "Momentum_x") momentum_x_index = iField;
+            if (fields[iField] == "Momentum_y") momentum_y_index = iField;
+            if (fields[iField] == "Momentum_z") momentum_z_index = iField;
+
+            if (fields[iField] == "Grid_Velocity_x") {
+                grid_vel_x_index = iField;
+                moving_surface = true;
+            }
+            if (fields[iField] == "Grid_Velocity_y") grid_vel_y_index = iField;
+            if (fields[iField] == "Grid_Velocity_z") grid_vel_z_index = iField;
+
+            if (fields[iField] == "Normal_x") {
+                normal_x_index = iField;
+                normals_output = true;
+            }
+            if (fields[iField] == "Normal_y") normal_y_index = iField;
+            if (fields[iField] == "Normal_z") normal_z_index = iField;
+        }
+
+        /*--- Set the number of variables, one per field in the restart file  ---*/
+
+        nFields = (int) fields.size();
+
+        /*--- Allocate memory for the restart data. ---*/
+
+        Aux_DataStruct = new passivedouble[nFields * nSurfaceNodes];
+
+        //skip line
+        getline(surface_file, useless);
+
+        /*--- Read all lines in the restart file and extract data. ---*/
+
+        for (int iNode = 0; iNode < nSurfaceNodes; iNode++) {
+
+            getline(surface_file, text_line);
+
+            delimiter = '\t';
+            vector<string> point_line = PrintingToolbox::split(text_line, delimiter);
+
+            for (iVar = 0; iVar < nFields; iVar++) {
+                Aux_DataStruct[iNode * nFields + iVar] = SU2_TYPE::GetValue(PrintingToolbox::stod(point_line[iVar]));
+            }
+        }
+
+        //assign the auxillary data to the F1A global variables
+        for (int iNode = 0; iNode < nSurfaceNodes; iNode++) {
+
+            surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + x_index];
+            surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + y_index];
+            surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + z_index];
+
+            RHO[iLocSample * nSurfaceNodes + iNode] = Aux_DataStruct[iNode * nFields + density_index];
+            FWH_Surf_pp[iLocSample * nSurfaceNodes + iNode] =
+                    Aux_DataStruct[iNode * nFields + pressure_index] - FreeStreamPressure;
+
+            if (moving_surface) {
+                FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + grid_vel_x_index];
+                FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + grid_vel_y_index];
+                FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + grid_vel_z_index];
+            } else {
+                FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = 0.0;
+                FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = 0.0;
+                FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = 0.0;
+            }
+
+            Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + momentum_x_index];
+            Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + momentum_y_index];
+            Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + momentum_z_index];
+
+            if (normals_output) {
+                Normal[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + normal_x_index];
+                Normal[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + normal_y_index];
+                Normal[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + normal_z_index];
+            } else {
+                Normal[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = 0.0;
+                Normal[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = 0.0;
+                Normal[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = 0.0;
+            }
+        }
+
+        surface_file.close();
+
+        delete[] Aux_DataStruct;
+
     }
 
-    //assign the auxillary data to the F1A global variables
-    for (int iNode = 0; iNode < nSurfaceNodes; iNode++ ) {
-
-        surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + x_index];
-        surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + y_index];
-        surface_geo[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + z_index];
-
-        RHO[iLocSample * nSurfaceNodes + iNode] = Aux_DataStruct[iNode * nFields + density_index];
-        FWH_Surf_pp[iLocSample * nSurfaceNodes + iNode] = Aux_DataStruct[iNode * nFields + pressure_index] - FreeStreamPressure;
-
-        if (moving_surface){
-            FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + grid_vel_x_index];
-            FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + grid_vel_y_index];
-            FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + grid_vel_z_index];
-        }
-        else {
-            FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = 0.0;
-            FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = 0.0;
-            FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = 0.0;
-        }
-
-        Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 0] = Aux_DataStruct[iNode * nFields + momentum_x_index];
-        Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 1] = Aux_DataStruct[iNode * nFields + momentum_y_index];
-        Momentum[iLocSample * nSurfaceNodes * nDim + iNode * nDim + 2] = Aux_DataStruct[iNode * nFields + momentum_z_index];
-
-    }
-
-    surface_file.close();
-
-    delete [] Aux_DataStruct;
+    SU2_MPI::Bcast(&surface_geo[iLocSample * nSurfaceNodes * nDim], nSurfaceNodes*nDim, MPI_DOUBLE, MASTER_NODE, MPI_COMM_WORLD);
+    SU2_MPI::Bcast(&Normal[iLocSample * nSurfaceNodes * nDim], nSurfaceNodes*nDim, MPI_DOUBLE, MASTER_NODE, MPI_COMM_WORLD);
+    SU2_MPI::Bcast(&RHO[iLocSample * nSurfaceNodes], nSurfaceNodes, MPI_DOUBLE, MASTER_NODE, MPI_COMM_WORLD);
+    SU2_MPI::Bcast(&Momentum[iLocSample * nSurfaceNodes * nDim], nSurfaceNodes*nDim, MPI_DOUBLE, MASTER_NODE, MPI_COMM_WORLD);
+    SU2_MPI::Bcast(&FWH_Surf_pp[iLocSample * nSurfaceNodes], nSurfaceNodes, MPI_DOUBLE, MASTER_NODE, MPI_COMM_WORLD);
+    SU2_MPI::Bcast(&FWH_Surf_Vel[iLocSample * nSurfaceNodes * nDim], nSurfaceNodes*nDim, MPI_DOUBLE, MASTER_NODE, MPI_COMM_WORLD);
 
 }
 
@@ -2491,7 +2532,7 @@ void F1A::LoadNormal(CConfig *config, CGeometry *geometry, unsigned long iSample
 
 
 void F1A::ComputeNormal( CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver){
-
+/*
     unsigned long iVertex, iPoint, iMarker;
     unsigned short iDim;
 
@@ -2502,15 +2543,15 @@ void F1A::ComputeNormal( CConfig *config, CGeometry *geometry, unsigned long iSa
 
         //allocate memory to the the heap to access across routines!
         for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
-            /* --- Loop over boundary markers to select those on the FWH surface --- */
+            // --- Loop over boundary markers to select those on the FWH surface --- //
             if (config->GetMarker_All_KindBC(iMarker) == ACOUSTIC_BOUNDARY) {
 
                 iVertex = geometry->nodes->GetVertex(globalIndexContainer[iPoint], iMarker);
 
-                /*--- Check the vertex is contained by the marker ---*/
+                //--- Check the vertex is contained by the marker ---//
                 if (iVertex != -1) {
 
-                    /*--- Normal vector for this vertex (negate for outward convention) ---*/
+                    //--- Normal vector for this vertex (negate for outward convention) ---//
                     geometry->vertex[iMarker][iVertex]->GetNormal(normal);
 
                     for (iDim = 0; iDim < nDim; iDim++) {
@@ -2536,6 +2577,26 @@ void F1A::ComputeNormal( CConfig *config, CGeometry *geometry, unsigned long iSa
     }
 
     delete [] normal;
+*/
+
+    unsigned long iPoint;
+    unsigned short iDim;
+
+    for (iPoint = 0; iPoint < nSurfaceNodes; iPoint++) {
+        Area[iLocSample * nSurfaceNodes + iPoint] = 0.0;
+        for (iDim = 0; iDim < nDim; iDim++) {
+            Area[iLocSample * nSurfaceNodes + iPoint] += pow( Normal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim], 2);
+        }
+
+        Area[iLocSample * nSurfaceNodes + iPoint] = sqrt(Area[iLocSample * nSurfaceNodes + iPoint]);
+
+        for (iDim = 0; iDim < nDim; iDim++) {
+            UnitaryNormal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim] =
+                    Normal[iLocSample * nSurfaceNodes * nDim + iPoint * nDim + iDim] /
+                    Area[iLocSample * nSurfaceNodes + iPoint];
+        }
+    }
+
 }
 
 void F1A::SetSurfaceGeom(CConfig *config, CGeometry *geometry, unsigned long iSample, unsigned long iLocSample, unsigned long iObserver) {
@@ -2633,7 +2694,7 @@ void F1A::ComputeMinMaxInc_Time(CConfig *config, CGeometry *geometry) {
     Read_TECPLOT_ASCII(config, geometry, 0, iLocSample);
     Read_TECPLOT_ASCII(config, geometry, nSample - 1, iLocSample + 1);
 
-    SetSurfaceGeom(config, geometry, 0, iLocSample, 0);
+    //SetSurfaceGeom(config, geometry, 0, iLocSample, 0);
     ComputeNormal(config, geometry, 0, iLocSample, 0);
 
     for (iObserver=0; iObserver<nObserver; iObserver++){
@@ -2842,7 +2903,7 @@ void F1A::F1A_SourceTimeDominant( CConfig *config, CGeometry *geometry){
             }
 
             Read_TECPLOT_ASCII( config, geometry, iSample, iLocSample);
-            SetSurfaceGeom(config, geometry, iSample, iLocSample, iObserver_outer);
+            //SetSurfaceGeom(config, geometry, iSample, iLocSample, iObserver_outer);
             ComputeNormal(config, geometry, iSample, iLocSample, iObserver_outer);
             ComputeModifiedVelocity(config, iSample, iLocSample);
 
@@ -2965,7 +3026,7 @@ void F1A::F1A_SourceTimeDominant( CConfig *config, CGeometry *geometry){
                 if (iSample2< (nSample-nqSample)){
 
                     Read_TECPLOT_ASCII( config, geometry, iSample2, nqSample-1);
-                    SetSurfaceGeom(config, geometry, iSample2, nqSample - 1, iObserver_outer);
+                    //SetSurfaceGeom(config, geometry, iSample2, nqSample - 1, iObserver_outer);
                     ComputeNormal(config, geometry, iSample2, nqSample - 1, iObserver_outer);
                     ComputeModifiedVelocity(config, iSample2, nqSample - 1);
 
@@ -2974,27 +3035,37 @@ void F1A::F1A_SourceTimeDominant( CConfig *config, CGeometry *geometry){
 
         }//iSample Loop
 
-#ifdef HAVE_MPI
         for (iObserver_inner=0; iObserver_inner<nObserver_inner; iObserver_inner++){
-			for (iSample=0; iSample<nSample; iSample++){
-				if(config->GetAcoustic_Inner_ObsLoop()){
-        				SU2_MPI::Reduce( &pp_TimeDomain_inner[iObserver_inner][iSample] , &pp_TimeDomainGlobal_inner[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM ,MASTER_NODE, MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &t_interp_inner[iObserver_inner][iSample] , &t_interp_inner[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_MAX, MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T1_I[iObserver_inner][iSample] , &T1_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T2_I[iObserver_inner][iSample] , &T2_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T3_I[iObserver_inner][iSample] , &T3_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T4_I[iObserver_inner][iSample] , &T4_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-				}else{
-					SU2_MPI::Reduce( &pp_TimeDomain_outer[iSample] , &pp_TimeDomainGlobal_outer[iSample] , 1 , MPI_DOUBLE , MPI_SUM ,MASTER_NODE, MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &t_interp_outer[iSample] , &t_interp_outer[iSample] , 1 , MPI_DOUBLE , MPI_MAX , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T1_O[iSample] , &T1_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T2_O[iSample] , &T2_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T3_O[iSample] , &T3_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-					SU2_MPI::Allreduce( &T4_O[iSample] , &T4_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
-				}
-			}
-		}
-#endif
+            for (iSample=0; iSample<nSample; iSample++){
+                if(config->GetAcoustic_Inner_ObsLoop()){
+
+                    su2double *source = nullptr;
+                    if (rank == MASTER_NODE){
+                        source = &pp_TimeDomainGlobal_inner[iObserver_inner][iSample];
+                    }
+
+                    SU2_MPI::Reduce( &pp_TimeDomain_inner[iObserver_inner][iSample] , source , 1 , MPI_DOUBLE , MPI_SUM ,MASTER_NODE, MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &t_interp_inner[iObserver_inner][iSample] , &t_interp_inner[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_MAX, MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T1_I[iObserver_inner][iSample] , &T1_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T2_I[iObserver_inner][iSample] , &T2_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T3_I[iObserver_inner][iSample] , &T3_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T4_I[iObserver_inner][iSample] , &T4_I[iObserver_inner][iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                }else{
+
+                    su2double *source = nullptr;
+                    if (rank == MASTER_NODE){
+                        source = &pp_TimeDomainGlobal_outer[iSample];
+                    }
+
+                    SU2_MPI::Reduce( &pp_TimeDomain_outer[iSample] , source , 1 , MPI_DOUBLE , MPI_SUM ,MASTER_NODE, MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &t_interp_outer[iSample] , &t_interp_outer[iSample] , 1 , MPI_DOUBLE , MPI_MAX , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T1_O[iSample] , &T1_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T2_O[iSample] , &T2_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T3_O[iSample] , &T3_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                    SU2_MPI::Allreduce( &T4_O[iSample] , &T4_O[iSample] , 1 , MPI_DOUBLE , MPI_SUM , MPI_COMM_WORLD);
+                }
+            }
+        }
 
         if (rank==MASTER_NODE){
             for (iObserver_inner=0; iObserver_inner<nObserver_inner; iObserver_inner++){

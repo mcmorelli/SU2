@@ -339,6 +339,10 @@ void CFlowCompOutput::SetVolumeOutputFields(CConfig *config){
 
   }
 
+  AddVolumeOutput("NORMAL-X", "Normal_x", "NORMALS", "Surface normals");
+  AddVolumeOutput("NORMAL-Y", "Normal_y", "NORMALS", "Surface normals");
+  if (nDim == 3) AddVolumeOutput("NORMAL-Z", "Normal_z", "NORMALS", "Surface normals");
+
   if (config->GetKind_Solver() == RANS) {
     AddVolumeOutput("EDDY_VISCOSITY", "Eddy_Viscosity", "PRIMITIVE", "Turbulent eddy viscosity");
   }
@@ -570,6 +574,16 @@ void CFlowCompOutput::LoadSurfaceData(CConfig *config, CGeometry *geometry, CSol
     SetVolumeOutputValue("HEAT_FLUX", iPoint, solver[FLOW_SOL]->GetHeatFlux(iMarker, iVertex));
     SetVolumeOutputValue("Y_PLUS", iPoint, solver[FLOW_SOL]->GetYPlus(iMarker, iVertex));
   }
+
+  su2double *normal = nullptr;
+  normal = new su2double[nDim];
+
+  geometry->vertex[iMarker][iVertex]->GetNormal(normal);
+
+  SetVolumeOutputValue("NORMAL-X", iPoint, normal[0]);
+  SetVolumeOutputValue("NORMAL-Y", iPoint, normal[1]);
+  if (nDim == 3) SetVolumeOutputValue("NORMAL-Z", iPoint, normal[2]);
+
 }
 
 void CFlowCompOutput::LoadHistoryData(CConfig *config, CGeometry *geometry, CSolver **solver)  {
